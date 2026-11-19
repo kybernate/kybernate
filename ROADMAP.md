@@ -7,16 +7,17 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | 1 | Foundation: Ubuntu LTS and K3s | `kybernate` | guides written, acceptance on hardware pending |
 | 2 | GPU inventory and reservation | `kybernate` | next |
 | 3 | Minimal dashboard: inventory and reservation | `kybernate-dashboard` | planned |
-| 4 | Runtime shim: hibernate and resume a container | `kybernate` | planned |
-| 5 | Model switching on a node | `kybernate` | planned |
-| 6 | Cluster scheduling | `kybernate` | planned |
-| 7 | Full dashboard and access control | `kybernate-dashboard`, `kybernate` | planned |
-| 8 | Checkpoint registry and migration | `kybernate` | planned |
-| 9 | RKE2 | `kybernate` | planned |
-| 10 | Kubernetes vanilla (kubeadm) | `kybernate` | planned |
-| 11 | k0s | `kybernate` | planned |
-| 12 | MicroK8s | `kybernate` | planned |
-| 13 | RHEL and related distributions | `kybernate` | planned |
+| 4 | Node agent: GPU leases and the warm tier | `kybernate` | planned |
+| 5 | Runtime shim and the cold tier | `kybernate` | planned |
+| 6 | Model switching on a node | `kybernate` | planned |
+| 7 | Cluster scheduling | `kybernate` | planned |
+| 8 | Full dashboard and access control | `kybernate-dashboard`, `kybernate` | planned |
+| 9 | Checkpoint registry and migration | `kybernate` | planned |
+| 10 | RKE2 | `kybernate` | planned |
+| 11 | Kubernetes vanilla (kubeadm) | `kybernate` | planned |
+| 12 | k0s | `kybernate` | planned |
+| 13 | MicroK8s | `kybernate` | planned |
+| 14 | RHEL and related distributions | `kybernate` | planned |
 
 ## Phase 1 – Foundation: Ubuntu LTS and K3s
 
@@ -42,7 +43,7 @@ A service on every GPU node, with an API, that knows each GPU and decides whethe
 - **Reservation:** GPUs are reserved for Kybernate or released for regular pods, declaratively through a custom resource. A plain YAML manifest is enough to configure a node.
 - **Enforcement:** Reserved GPUs are no longer offered to the regular scheduler. A GPU still used by a regular pod is reserved as soon as that pod has finished, and the custom resource's status shows the pending state.
 - **Access control:** ClusterRoles for reading the inventory and for changing reservations.
-- This service becomes the foundation of the node agent in later phases.
+- This service becomes the node agent in phase 4.
 
 ## Phase 3 – Minimal dashboard: inventory and reservation
 
@@ -52,80 +53,95 @@ In the new, separate repository `kybernate-dashboard`, installed optionally thro
 - Reserves GPUs for Kybernate or releases them, by editing the same custom resources as a YAML manifest would.
 - Acts with the identity of the signed-in user. Kubernetes RBAC decides what they may change.
 
-## Phase 4 – Runtime shim: hibernate and resume a container
+## Phase 4 – Node agent: GPU leases and the warm tier
 
-- A containerd shim behind the RuntimeClass `kybernate`, running on reserved GPUs.
-- Suspends a container to RAM (warm), spills it to disk (cold) and resumes it.
+Without its own GPU allocation, model switching is impossible. A pod that requests `nvidia.com/gpu` keeps those GPUs allocated as long as it exists, even when its model sleeps and the VRAM is free. So the node agent takes over GPU allocation for Kybernate workloads first.
+
+- **The node agent grows out of the inventory service:**
+  - Pods with the RuntimeClass `kybernate` do not request `nvidia.com/gpu`.
+  - The agent hands out an exclusive lease over a full GPU set from the reserved pool, covering all tensor-parallel ranks at once.
+  - The devices are injected when the container is created, through CDI devices or an NRI plugin in containerd.
+- **Warm tier without a shim:** The processes keep running while suspended, so no runtime changes are needed.
+  - The agent finds the container's processes through the CRI API and drives `cuda-checkpoint` directly.
+  - Suspend moves the VRAM into host RAM and releases the lease.
+  - Resume acquires a new lease, if necessary on a different GPU set with UUID remapping.
+- **Recovery:** Leases and suspended instances survive restarts and failures of the agent.
+- **Dashboard:** It shows which lease each GPU carries and whether an instance is hot or warm.
+- **API:** Suspend and resume are exposed through custom resources and can be triggered by YAML.
+
+## Phase 5 – Runtime shim and the cold tier
+
+- A containerd shim behind the RuntimeClass `kybernate`.
+- Spills a warm instance to the node's NVMe with CRIU and restores it.
+  - The shim keeps reporting the container as running, so neither containerd nor the kubelet restart it while its processes are gone.
 - `cuda-checkpoint` and CRIU are orchestrated for all tensor-parallel ranks of an instance.
-- GPU UUID remapping on restore.
+- RAM and disk budgets per node, enforced by the node agent.
 - A decision on which runc the shim uses: the one shipped by the distribution, or a current upstream runc for the `kybernate` class only.
 
-## Phase 5 – Model switching on a node
+## Phase 6 – Model switching on a node
 
-- The node agent grows out of the inventory service. It adds:
-  - atomic leases over full GPU sets from the reserved pool
-  - RAM and disk budgets
-  - recovery after failures and restarts
-- OpenAI-compatible queueing proxy with bounded per-model queues, a single restore per model, HTTP and SSE drain, and readiness checks.
-- Benchmarks of model switches A → B → A against cold starts: time to first token, restore duration, memory footprint.
+- OpenAI-compatible queueing proxy with bounded per-model queues and a single restore per model.
+- HTTP and SSE drain before a suspend, and readiness checks after a resume.
+- Model switches A → B → A through the warm and the cold tier.
+- Benchmarks against cold starts: time to first token, restore duration, memory footprint.
 
-## Phase 6 – Cluster scheduling
+## Phase 7 – Cluster scheduling
 
 - Operator and custom resources for models and checkpoint policies.
 - Scale-out of one model generation onto many GPU sets across nodes.
 - Making room for a requested model by sending a replica of another model to the warm tier.
 - Rebalancing as the load shifts between models and nodes.
 
-## Phase 7 – Full dashboard and access control
+## Phase 8 – Full dashboard and access control
 
 - Models with their temperature (hot, warm, cold), replica placement and queue lengths.
 - Actions: hibernate, resume, add and remove replicas.
 - Ready-made ClusterRoles for viewing, editing and administration. Cluster-admin rights are only needed for installation.
 - Read-only display of resources managed by GitOps tools.
 
-## Phase 8 – Checkpoint registry and migration
+## Phase 9 – Checkpoint registry and migration
 
 - Checkpoint generations are registered per hardware and runtime profile and kept on suitable nodes.
 - Transfers between nodes are secured with leases and fencing.
 - Before a restore, the target validates the driver, GPU chip, topology, CRIU, runc and image digest.
 
-## Phases 9 to 12 – More Kubernetes distributions
+## Phases 10 to 13 – More Kubernetes distributions
 
 Each distribution gets its own phase:
 
 - installation guides for Ubuntu LTS as a single node and as a multi node
 - integration of the shim into the distribution's containerd
 - the distribution's paths for the containerd socket, the kubelet directory and the runc it ships
-- the full acceptance tests of phases 2 to 6
+- the full acceptance tests of phases 2 to 7
 
 The order follows how close each distribution is to the K3s code path.
 
-### Phase 9 – RKE2
+### Phase 10 – RKE2
 
 - Same integration path as K3s: embedded containerd configured through `config.toml.tmpl`, runc shipped by RKE2.
 - CIS-hardened defaults with Pod Security Admission on `restricted`. Kybernate's privileged node components need an exempt namespace.
 - Multi node with embedded etcd and servers that also run workloads.
 
-### Phase 10 – Kubernetes vanilla (kubeadm)
+### Phase 11 – Kubernetes vanilla (kubeadm)
 
 - The upstream reference. containerd, runc and the CNI plugins are installed on the host in their latest releases.
 - Control plane as static pods, with stacked etcd for multi node.
 - Nodes join through the IP address of the first control-plane node. HA endpoint options are documented separately.
 
-### Phase 11 – k0s
+### Phase 12 – k0s
 
 - containerd and runc are shipped and managed by k0s. Kybernate's runtime is added as a drop-in under `/etc/k0s/containerd.d/`.
 - Paths: socket `/run/k0s/containerd.sock`, kubelet directory `/var/lib/k0s/kubelet`.
 - Controllers run no workloads by default. Multi node uses controllers with `--enable-worker` to get hybrid nodes.
 
-### Phase 12 – MicroK8s
+### Phase 13 – MicroK8s
 
 - Installed as a snap. containerd and runc run inside the snap and are configured through `containerd-template.toml`.
 - Paths: socket `/var/snap/microk8s/common/run/containerd.sock`, kubelet directory `/var/snap/microk8s/common/var/lib/kubelet`.
 - Classic confinement is required, so that the shim, CRIU and `cuda-checkpoint` are reachable from the snap's containerd.
 - Multi node with dqlite, which becomes highly available automatically from three nodes on.
 
-## Phase 13 – RHEL and related distributions
+## Phase 14 – RHEL and related distributions
 
 RHEL and compatible distributions such as Rocky Linux and AlmaLinux, in their current major release.
 

@@ -7,11 +7,11 @@ Kybernate runs on GPU nodes of a Kubernetes cluster. The installation is documen
 | Linux | Kubernetes | Single node | Multi node |
 | --- | --- | --- | --- |
 | Ubuntu LTS | K3s | [guide](ubuntu/k3s/single-node.md) | [guide](ubuntu/k3s/multi-node.md) |
-| Ubuntu LTS | RKE2 | planned (phase 9) | planned (phase 9) |
-| Ubuntu LTS | Kubernetes vanilla (kubeadm) | planned (phase 10) | planned (phase 10) |
-| Ubuntu LTS | k0s | planned (phase 11) | planned (phase 11) |
-| Ubuntu LTS | MicroK8s | planned (phase 12) | planned (phase 12) |
-| RHEL and related | per distribution | planned (phase 13) | planned (phase 13) |
+| Ubuntu LTS | RKE2 | planned (phase 10) | planned (phase 10) |
+| Ubuntu LTS | Kubernetes vanilla (kubeadm) | planned (phase 11) | planned (phase 11) |
+| Ubuntu LTS | k0s | planned (phase 12) | planned (phase 12) |
+| Ubuntu LTS | MicroK8s | planned (phase 13) | planned (phase 13) |
+| RHEL and related | per distribution | planned (phase 14) | planned (phase 14) |
 
 Phases refer to the [roadmap](../../ROADMAP.md).
 
