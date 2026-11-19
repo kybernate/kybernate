@@ -7,6 +7,9 @@ PLATFORMS      ?= linux/amd64,linux/arm64
 
 CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@latest
 HELM           ?= helm
+# go-nvml's NVML header marks many functions deprecated; keep build logs readable.
+export CGO_CFLAGS ?= -O2 -g -Wno-deprecated-declarations
+
 LDFLAGS        := -s -w -X github.com/kybernate/kybernate/internal/version.Version=$(VERSION) -X github.com/kybernate/kybernate/internal/version.Commit=$(COMMIT)
 
 .PHONY: all

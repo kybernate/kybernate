@@ -8,7 +8,9 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 | --- | --- |
 | `api/v1alpha1/` | Go types of the custom resources (group `kybernate.io`) |
 | `cmd/node-agent/` | Entry point of the node agent, which runs as a DaemonSet on every GPU node |
-| `internal/` | Shared packages, such as `version` |
+| `internal/inventory/` | GPU inventory through NVML: GPUs, VRAM, architecture and links between GPUs |
+| `internal/agent/` | Keeps the `GPUNode` resource of the local node up to date |
+| `internal/version/` | Build information |
 | `config/crd/bases/` | CRDs generated from the API types |
 | `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `crds/`. |
 | `docs/` | Installation guides and this document |
@@ -18,13 +20,13 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 
 | Component | Image | Status |
 | --- | --- | --- |
-| node agent | `ghcr.io/kybernate/node-agent` | skeleton: starts, reports health and waits. GPU inventory comes next. |
+| node agent | `ghcr.io/kybernate/node-agent` | GPU inventory (read only): publishes every GPU of its node as a `GPUNode` resource. Reservation is stored, enforcement comes next. |
 
 Further components (shim installer, proxy, operator) follow the same pattern: an entry point under `cmd/`, an image `ghcr.io/kybernate/<component>` and a switch in the Helm chart.
 
 ## Requirements
 
-- Go in the version from `go.mod`
+- Go in the version from `go.mod`, with cgo and a C compiler (NVML is loaded through cgo)
 - Docker with Buildx for images
 - Helm for the chart
 
@@ -59,6 +61,17 @@ The workflow `.github/workflows/ci.yaml` runs on every push to `main`, on pull r
 4. **Chart:** For a tag `vX.Y.Z` the chart is packaged with version and app version `X.Y.Z` and pushed to `oci://ghcr.io/kybernate/charts/kybernate`.
 
 **A release is a Git tag:** `git tag vX.Y.Z && git push origin vX.Y.Z`. All images and the chart of a release share one version.
+
+## Testing on a GPU cluster without the registry
+
+For a development build, build the image on an amd64 GPU node and import it into the containerd of K3s on every node:
+
+```bash
+docker build -t ghcr.io/kybernate/node-agent:dev .
+docker save ghcr.io/kybernate/node-agent:dev | sudo k3s ctr -n k8s.io images import -
+```
+
+Then install the chart with `--set nodeAgent.image.tag=dev --set nodeAgent.image.pullPolicy=Never`.
 
 ## Installing from the repository
 
