@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/kybernate-logo-dark.svg">
-    <img src="docs/assets/kybernate-logo-light.svg" alt="Kybernate" width="520">
-  </picture>
+  <img src="docs/assets/kybernate-logo-light.svg" alt="Kybernate" width="520">
 </p>
 
 <p align="center">
