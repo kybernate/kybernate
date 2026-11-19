@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="192 40 640 640" role="img" aria-labelledby="kyb-title">
+  <title id="kyb-title">Kybernate</title>
+  <!--
+    Kybernate-Bildmarke im CloudCourse-Farbraum
+    Siebeneck  #2e365f (CloudCourse Navy)
+    Die Layer zeigen die Temperatur eines Modellzustands:
+    Layer 1    hot  · VRAM    · #d64f2d (CloudCourse Orange-Rot)
+    Layer 2    warm · RAM     · #f0913f (Orange)
+    Layer 3    cold · Storage · #6f7bb8 (Blau, aus dem CloudCourse-Navy abgeleitet)
+    Mond       #f5f1ea
+  -->
+  <defs>
+    <mask id="kyb-moon-cut" maskUnits="userSpaceOnUse" x="192" y="40" width="640" height="640">
+      <rect x="192" y="40" width="640" height="640" fill="#fff"/>
+      <circle cx="556" cy="224" r="52" fill="#000"/>
+    </mask>
+    <mask id="kyb-notch" maskUnits="userSpaceOnUse" x="192" y="40" width="640" height="640">
+      <rect x="192" y="40" width="640" height="640" fill="#fff"/>
+      <circle cx="520" cy="250" r="82" fill="#000"/>
+    </mask>
+  </defs>
+  <polygon points="512,77 746.55,189.95 804.48,443.76 642.16,647.29 381.84,647.29 219.52,443.76 277.45,189.95"
+           fill="#2e365f" stroke="#2e365f" stroke-width="40" stroke-linejoin="round"/>
+  <g transform="translate(0 120)">
+    <polygon points="512,292 697,370 512,448 327,370" fill="#171c38"/>
+    <polygon points="327,370 512,448 512,492 327,414" fill="#6f7bb8"/>
+    <polygon points="512,448 697,370 697,414 512,492" fill="#4b5690"/>
+  </g>
+  <g transform="translate(0 60)">
+    <polygon points="512,292 697,370 512,448 327,370" fill="#171c38"/>
+    <polygon points="327,370 512,448 512,492 327,414" fill="#f0913f"/>
+    <polygon points="512,448 697,370 697,414 512,492" fill="#d2732a"/>
+  </g>
+  <g mask="url(#kyb-notch)">
+    <polygon points="512,292 697,370 512,448 327,370" fill="#e8643d"/>
+    <polygon points="327,370 512,448 512,492 327,414" fill="#d64f2d"/>
+    <polygon points="512,448 697,370 697,414 512,492" fill="#a93a1e"/>
+  </g>
+  <circle cx="520" cy="250" r="62" fill="#f5f1ea" mask="url(#kyb-moon-cut)"/>
+</svg>
