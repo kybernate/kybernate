@@ -42,6 +42,84 @@ The moon is the hibernation that moves a model between these tiers.
 
 Kybernate is a Kubernetes extension made of several cooperating components:
 
+```mermaid
+flowchart TB
+    clients["Clients<br/>OpenAI-compatible API"]
+    admin["kubectl · GitOps"]
+
+    subgraph cluster["Kubernetes cluster"]
+        direction TB
+
+        subgraph control["Control plane"]
+            direction LR
+            api["kube-apiserver"]
+            operator["Kybernate operator<br/>CRDs: GPU pools · models · policies"]
+        end
+
+        proxy["Kybernate proxy<br/>queue · routing · wake-up"]
+        dashboard["Kybernate dashboard<br/>optional, separate repo"]
+
+        subgraph node["Every GPU node"]
+            direction TB
+            agent["Node agent<br/>inventory · reservation · leases"]
+            deviceplugin["Device plugin"]
+
+            subgraph runtime["containerd"]
+                direction LR
+                shim["kybernate shim<br/>RuntimeClass kybernate"]
+                runc["runc"]
+            end
+
+            tools["Host: NVIDIA driver · CRIU · cuda-checkpoint"]
+
+            subgraph gpus["GPUs"]
+                direction LR
+                pool["Kybernate pool<br/>model pods · hot"]
+                regular["Regular pool<br/>other GPU pods"]
+            end
+
+            subgraph tiers["Node memory and storage"]
+                direction LR
+                ram["RAM · warm"]
+                nvme["NVMe · cold"]
+            end
+        end
+
+        registry["Checkpoint registry<br/>planned"]
+    end
+
+    clients -->|requests| proxy
+    admin --> api
+    dashboard --> api
+    operator <-->|watch · reconcile| api
+    agent <-->|inventory · leases| api
+    proxy -->|suspend · resume| agent
+    proxy -->|inference| pool
+    agent --> shim
+    shim --> runc
+    shim -.-> tools
+    agent -.-> tools
+    deviceplugin --> regular
+    agent --> pool
+    pool <-->|suspend · resume| ram
+    ram <-->|spill · restore| nvme
+    nvme <-.->|generations| registry
+
+    classDef hot fill:#d64f2d,stroke:#a93a1e,color:#ffffff
+    classDef warm fill:#f0913f,stroke:#d2732a,color:#1d2347
+    classDef cold fill:#6f7bb8,stroke:#4b5690,color:#ffffff
+    classDef kyb fill:#2e365f,stroke:#2e365f,color:#ffffff
+    classDef planned stroke-dasharray: 5 5
+    class pool hot
+    class ram warm
+    class nvme cold
+    class operator,proxy,agent,shim,deviceplugin kyb
+    class dashboard,registry planned
+```
+
+The red, orange and blue boxes show where a model's state lives: hot in VRAM, warm in RAM, cold on NVMe. Dashed boxes are optional or planned.
+
+
 | Component | Role |
 | --- | --- |
 | **Queueing proxy** | OpenAI-compatible endpoint in front of the models. It reads the model name, keeps a bounded queue per model and triggers a single restore per model, even when many requests wait for the same one. It drains in-flight requests and SSE streams before a model is suspended, and spreads load across replicas. |
@@ -53,11 +131,20 @@ Kybernate is a Kubernetes extension made of several cooperating components:
 
 A typical model switch:
 
-```text
-request for model B ──▶ proxy queues it ──▶ no free GPU set?
-        │                                    └─▶ a replica of model A drains and goes warm (VRAM → RAM)
-        ▼
-node agent leases the GPU set ──▶ shim restores model B (RAM or NVMe → VRAM) ──▶ proxy releases the queue
+```mermaid
+flowchart LR
+    request(["Request for model B"]) --> queue["Proxy queues it<br/>further requests for B wait<br/>for the same restore"]
+    queue --> free{"Free GPU set<br/>in the Kybernate pool?"}
+    free -->|yes| lease["Node agent leases<br/>the GPU set"]
+    free -->|no| room["A replica of model A<br/>drains and goes warm<br/>VRAM → RAM"]
+    room --> lease
+    lease --> resume["Model B resumes<br/>warm: RAM → VRAM<br/>cold: NVMe → RAM → VRAM"]
+    resume --> release(["Proxy releases the queue<br/>to model B"])
+
+    classDef hot fill:#d64f2d,stroke:#a93a1e,color:#ffffff
+    classDef warm fill:#f0913f,stroke:#d2732a,color:#1d2347
+    class resume hot
+    class room warm
 ```
 
 Because a frozen model generation can be resumed more than once, Kybernate can also:
