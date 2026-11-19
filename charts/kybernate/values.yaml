@@ -1,0 +1,38 @@
+# Default values for the Kybernate chart.
+
+nodeAgent:
+  # Deploy the node agent on every GPU node.
+  enabled: true
+
+  image:
+    repository: ghcr.io/kybernate/node-agent
+    # Defaults to the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # The node agent reads all GPUs of its node through NVML. It runs with the
+  # NVIDIA runtime and NVIDIA_VISIBLE_DEVICES=all and does not request
+  # nvidia.com/gpu, so it sees every GPU without allocating any.
+  runtimeClassName: nvidia
+
+  # Nodes the agent runs on. The label is also used by the NVIDIA device plugin.
+  nodeSelector:
+    nvidia.com/gpu.present: "true"
+
+  tolerations: []
+
+  healthPort: 8081
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+imagePullSecrets: []
+
+rbac:
+  # Add the kybernate-viewer and kybernate-editor roles to the built-in
+  # view and edit roles.
+  aggregateToDefaultRoles: true

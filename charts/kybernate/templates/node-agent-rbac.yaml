@@ -1,0 +1,47 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kybernate.nodeAgent.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kybernate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kybernate.nodeAgent.name" . }}
+  labels:
+    {{- include "kybernate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-agent
+rules:
+  - apiGroups: ["kybernate.io"]
+    resources: ["gpunodes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["kybernate.io"]
+    resources: ["gpunodes/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kybernate.nodeAgent.name" . }}
+  labels:
+    {{- include "kybernate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kybernate.nodeAgent.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kybernate.nodeAgent.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

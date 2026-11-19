@@ -160,6 +160,8 @@ Because a frozen model generation can be resumed more than once, Kybernate can a
 
 Every component is installed in its latest release from its upstream source. Nothing is pinned.
 
+For contributors: [Development](docs/development.md) covers the repository layout, build targets, CI and releases.
+
 ## Known limits
 
 - Kybernate checkpoints quiescent inference servers. The proxy drains in-flight requests before a suspend.

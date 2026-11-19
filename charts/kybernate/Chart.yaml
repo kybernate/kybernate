@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kybernate
+description: Hibernate GPU workloads on Kubernetes and resume models in seconds.
+type: application
+home: https://kybernate.io
+icon: https://raw.githubusercontent.com/kybernate/kybernate/main/docs/assets/kybernate-mark.svg
+sources:
+  - https://github.com/kybernate/kybernate
+# Overwritten by the release pipeline with the version of the Git tag.
+version: 0.0.0-dev
+# Image tag used when no tag is set in the values. Builds of main are tagged "main".
+appVersion: main

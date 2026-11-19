@@ -1,0 +1,9 @@
+Kybernate {{ .Chart.AppVersion }} is installed in the namespace {{ .Release.Namespace }}.
+
+{{- if .Values.nodeAgent.enabled }}
+
+The node agent runs on every node labelled nvidia.com/gpu.present=true:
+
+  kubectl -n {{ .Release.Namespace }} get daemonset {{ include "kybernate.nodeAgent.name" . }}
+  kubectl get gpunodes
+{{- end }}
