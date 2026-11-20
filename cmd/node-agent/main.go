@@ -26,6 +26,7 @@ import (
 	"github.com/kybernate/kybernate/api/v1alpha1"
 	"github.com/kybernate/kybernate/internal/agent"
 	"github.com/kybernate/kybernate/internal/allocation"
+	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
 	"github.com/kybernate/kybernate/internal/version"
 )
@@ -36,6 +37,11 @@ type options struct {
 	pendingInterval    time.Duration
 	podResourcesSocket string
 	gpuResources       string
+	devicePlugin       bool
+	devicePluginDir    string
+	deviceResource     string
+	deviceStrategy     string
+	cdiKind            string
 }
 
 func main() {
@@ -45,6 +51,11 @@ func main() {
 	flag.DurationVar(&o.pendingInterval, "pending-interval", agent.DefaultPendingInterval, "how often the inventory is refreshed while a reserved GPU waits for its release")
 	flag.StringVar(&o.podResourcesSocket, "pod-resources-socket", allocation.DefaultSocket, "path of the kubelet's PodResources socket")
 	flag.StringVar(&o.gpuResources, "gpu-resources", strings.Join(allocation.DefaultResourceNames, ","), "comma-separated device plugin resources that allocate GPUs")
+	flag.BoolVar(&o.devicePlugin, "device-plugin", false, "offer the GPUs to the kubelet as a device plugin and keep reserved GPUs away from regular pods; replaces the NVIDIA device plugin")
+	flag.StringVar(&o.devicePluginDir, "device-plugin-dir", deviceplugin.DefaultDir, "the kubelet's device plugin directory")
+	flag.StringVar(&o.deviceResource, "device-plugin-resource", deviceplugin.DefaultResourceName, "resource name the device plugin offers the GPUs as")
+	flag.StringVar(&o.deviceStrategy, "device-list-strategy", string(deviceplugin.StrategyEnvVar), "how GPUs are handed to containers: envvar (NVIDIA_VISIBLE_DEVICES, needs the NVIDIA runtime) or cdi")
+	flag.StringVar(&o.cdiKind, "cdi-kind", deviceplugin.DefaultCDIKind, "CDI device kind of the GPUs, used with --device-list-strategy=cdi")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -85,6 +96,10 @@ func run(log *slog.Logger, o options) error {
 	}
 
 	resourceNames := strings.Split(o.gpuResources, ",")
+	strategy := deviceplugin.Strategy(o.deviceStrategy)
+	if strategy != deviceplugin.StrategyEnvVar && strategy != deviceplugin.StrategyCDI {
+		return fmt.Errorf("unknown device list strategy %q, use envvar or cdi", o.deviceStrategy)
+	}
 	a := &agent.Agent{
 		Client: c,
 		Source: inventory.NVML{},
@@ -97,6 +112,15 @@ func run(log *slog.Logger, o options) error {
 		Interval:        o.interval,
 		PendingInterval: o.pendingInterval,
 		Log:             log,
+	}
+	var plugin *deviceplugin.Plugin
+	if o.devicePlugin {
+		plugin = deviceplugin.New(log)
+		plugin.Dir = o.devicePluginDir
+		plugin.ResourceName = o.deviceResource
+		plugin.Strategy = strategy
+		plugin.CDIKind = o.cdiKind
+		a.Devices = plugin
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -113,12 +137,16 @@ func run(log *slog.Logger, o options) error {
 	})
 	server := &http.Server{Addr: o.healthAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
 	go func() { errs <- server.ListenAndServe() }()
 	go func() { errs <- a.Run(ctx) }()
+	if plugin != nil {
+		go func() { errs <- plugin.Run(ctx) }()
+	}
 
 	log.Info("node agent started", "version", version.Version, "commit", version.Commit, "node", nodeName,
-		"interval", o.interval.String(), "podResourcesSocket", o.podResourcesSocket, "gpuResources", resourceNames)
+		"interval", o.interval.String(), "podResourcesSocket", o.podResourcesSocket, "gpuResources", resourceNames,
+		"devicePlugin", o.devicePlugin)
 
 	select {
 	case <-ctx.Done():

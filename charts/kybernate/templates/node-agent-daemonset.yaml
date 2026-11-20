@@ -40,6 +40,15 @@ spec:
             - --health-addr=:{{ .Values.nodeAgent.healthPort }}
             - --pod-resources-socket={{ .Values.nodeAgent.kubeletPodResourcesPath }}/kubelet.sock
             - --gpu-resources={{ join "," .Values.nodeAgent.gpuResources }}
+            {{- with .Values.nodeAgent.devicePlugin }}
+            {{- if .enabled }}
+            - --device-plugin
+            - --device-plugin-dir={{ .path }}
+            - --device-plugin-resource={{ .resourceName }}
+            - --device-list-strategy={{ .deviceListStrategy }}
+            - --cdi-kind={{ .cdiKind }}
+            {{- end }}
+            {{- end }}
           env:
             - name: NODE_NAME
               valueFrom:
@@ -68,6 +77,10 @@ spec:
             - name: pod-resources
               mountPath: {{ .Values.nodeAgent.kubeletPodResourcesPath }}
               readOnly: true
+            {{- if .Values.nodeAgent.devicePlugin.enabled }}
+            - name: device-plugins
+              mountPath: {{ .Values.nodeAgent.devicePlugin.path }}
+            {{- end }}
           # The kubelet's PodResources socket belongs to root with mode 0755,
           # so only root can connect to it. The agent runs as UID 0 but
           # without any capabilities and without privilege escalation.
@@ -83,4 +96,10 @@ spec:
           hostPath:
             path: {{ .Values.nodeAgent.kubeletPodResourcesPath }}
             type: Directory
+        {{- if .Values.nodeAgent.devicePlugin.enabled }}
+        - name: device-plugins
+          hostPath:
+            path: {{ .Values.nodeAgent.devicePlugin.path }}
+            type: Directory
+        {{- end }}
 {{- end }}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/kybernate/kybernate/api/v1alpha1"
 	"github.com/kybernate/kybernate/internal/allocation"
+	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
 )
 
@@ -130,6 +131,17 @@ func FailedStatus(previous v1alpha1.GPUNodeStatus, reason string, err error) v1a
 		Message: err.Error(),
 	})
 	return status
+}
+
+// PluginDevices lists the GPUs for the device plugin. Every GPU in the spec
+// counts as reserved from the moment it is listed there, also while it still
+// waits for a regular pod to release it, so it cannot go to the next pod.
+func PluginDevices(inv inventory.Node, spec v1alpha1.GPUNodeSpec) []deviceplugin.Device {
+	out := make([]deviceplugin.Device, 0, len(inv.GPUs))
+	for _, gpu := range inv.GPUs {
+		out = append(out, deviceplugin.Device{ID: gpu.UUID, Reserved: slices.Contains(spec.ReservedGPUs, gpu.UUID)})
+	}
+	return out
 }
 
 // HasPending reports whether a reserved GPU still waits for its release.

@@ -20,6 +20,7 @@ import (
 
 	"github.com/kybernate/kybernate/api/v1alpha1"
 	"github.com/kybernate/kybernate/internal/allocation"
+	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
 )
 
@@ -29,6 +30,12 @@ const DefaultPendingInterval = 5 * time.Second
 
 // watchRetryDelay is the pause before a failed watch is started again.
 const watchRetryDelay = 5 * time.Second
+
+// DeviceSink receives the GPUs of the node and their reservations after every
+// successful refresh. The device plugin implements it.
+type DeviceSink interface {
+	Update(devices []deviceplugin.Device)
+}
 
 // Agent publishes the GPU inventory of one node as a GPUNode resource.
 type Agent struct {
@@ -44,9 +51,13 @@ type Agent struct {
 	// Interval is the regular refresh interval.
 	Interval time.Duration
 	// PendingInterval is the refresh interval while a reservation waits for
-	// its GPU to be released. It defaults to DefaultPendingInterval.
+	// its GPU to be released and after a failed refresh. It defaults to
+	// DefaultPendingInterval.
 	PendingInterval time.Duration
 	Log             *slog.Logger
+	// Devices, if set, receives the GPUs and reservations, for example the
+	// device plugin that enforces the reservations.
+	Devices DeviceSink
 	// Now returns the current time. It defaults to time.Now.
 	Now func() time.Time
 
@@ -86,10 +97,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-timer.C:
 		case <-triggers:
 		}
+		next := a.nextInterval()
 		if err := a.Sync(ctx); err != nil {
-			a.Log.Error("publishing the GPU inventory failed", "error", err)
+			a.Log.Error("publishing the GPU inventory failed, retrying soon", "error", err)
+			next = a.shortInterval()
 		}
-		timer.Reset(a.nextInterval())
+		timer.Reset(next)
 	}
 }
 
@@ -140,6 +153,9 @@ func (a *Agent) Sync(ctx context.Context) error {
 		return fmt.Errorf("reading the GPU allocations: %w", allocErr)
 	}
 
+	if a.Devices != nil {
+		a.Devices.Update(PluginDevices(inv, gpuNode.Spec))
+	}
 	a.pending.Store(HasPending(gpuNode.Status))
 	a.logTransitions(previous, gpuNode.Status)
 	if !a.ready.Swap(true) {
@@ -230,12 +246,18 @@ func sleep(ctx context.Context, d time.Duration) {
 
 func (a *Agent) nextInterval() time.Duration {
 	if a.pending.Load() {
-		if a.PendingInterval > 0 {
-			return a.PendingInterval
-		}
-		return DefaultPendingInterval
+		return a.shortInterval()
 	}
 	return a.Interval
+}
+
+// shortInterval applies while a reservation waits and after a failed refresh,
+// for example while the kubelet restarts.
+func (a *Agent) shortInterval() time.Duration {
+	if a.PendingInterval > 0 {
+		return a.PendingInterval
+	}
+	return DefaultPendingInterval
 }
 
 // reportUnknown logs device IDs that match no GPU, once per distinct set.

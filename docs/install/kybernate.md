@@ -25,10 +25,11 @@ The cluster is set up with one of the [installation guides](README.md). In parti
 | DaemonSet `kybernate-node-agent` | Reads the GPUs of its node through NVML and the GPU allocations through the kubelet, and publishes both as `GPUNode` |
 | ServiceAccount and ClusterRole for the node agent | Read nodes, watch pods, write `gpunodes` and `gpunodes/status` |
 | ClusterRoles `kybernate-viewer` and `kybernate-editor` | Read or change `GPUNode` resources. They are added to the built-in roles `view` and `edit`. |
+| ValidatingAdmissionPolicy `<release>-gpu-access` | Only with `nodeAgent.devicePlugin.admissionPolicy.enabled`: rejects pods that bypass the device plugin, see [Enforce reservations](#4-enforce-reservations-optional) |
 
 The node agent does not request `nvidia.com/gpu`. It sees all GPUs of its node through the RuntimeClass `nvidia` and only has the driver capability `utility`, so it uses no GPU memory and does not block a GPU for other pods.
 
-To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`.
+To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`. With the device plugin enabled, the agent also mounts the kubelet's device plugin directory `/var/lib/kubelet/device-plugins` to register there.
 
 ## 1. Install
 
@@ -115,7 +116,89 @@ Every GPU can be reserved, also one a regular pod holds right now:
 
 To return a GPU, remove its UUID from `spec.reservedGPUs`.
 
-A reservation does not yet keep new pods away from the GPU: the NVIDIA device plugin still offers it as `nvidia.com/gpu`. Enforcement follows in a later release, see the [roadmap](../../ROADMAP.md).
+As long as the NVIDIA device plugin offers the GPUs, a reservation does not keep new pods away from the GPU. To enforce reservations, let Kybernate offer the GPUs, see the next section.
+
+## 4. Enforce reservations (optional)
+
+The node agent can offer the GPUs to the kubelet itself, as the resource `nvidia.com/gpu`. Regular pods request GPUs exactly as before. Reserved GPUs, including those still waiting for their release, are reported to the kubelet as unavailable:
+
+- No new pod gets a reserved GPU. When a pod releases a reserved GPU, it goes to the Kybernate pool and not to the next pod.
+- Pods that already hold a GPU keep it until they end.
+- The node's allocatable `nvidia.com/gpu` shrinks by the number of reserved GPUs.
+
+The Kybernate device plugin replaces the NVIDIA device plugin. Both register the same resource, so only one of them may run on a node.
+
+### Requirements
+
+- containerd 2 with CDI, as shipped by K3s.
+- An NVIDIA Container Toolkit that generates the CDI specification `/var/run/cdi/nvidia.yaml`. Current releases keep it up to date through the systemd unit `nvidia-cdi-refresh`. Check with `nvidia-ctk cdi list`.
+
+### Switch over
+
+1. Remove the NVIDIA device plugin. With K3s:
+
+   ```bash
+   kubectl -n kube-system delete helmchart nvidia-device-plugin
+   ```
+
+2. Enable the Kybernate device plugin and the admission policy:
+
+   ```bash
+   helm upgrade kybernate oci://ghcr.io/kybernate/charts/kybernate --namespace kybernate-system \
+     --set nodeAgent.devicePlugin.enabled=true \
+     --set nodeAgent.devicePlugin.admissionPolicy.enabled=true
+   ```
+
+   With K3s, put the same values into `spec.valuesContent` of the `HelmChart`:
+
+   ```yaml
+   valuesContent: |-
+     nodeAgent:
+       devicePlugin:
+         enabled: true
+         admissionPolicy:
+           enabled: true
+   ```
+
+3. Check that every GPU node offers its GPUs again:
+
+   ```bash
+   kubectl get nodes -o custom-columns='NODE:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
+   ```
+
+Pods already running keep their GPUs during the switch.
+
+### How GPUs reach the container
+
+With the default `nodeAgent.devicePlugin.deviceListStrategy: cdi`, containerd injects the allocated GPUs as CDI devices. GPU pods no longer need the RuntimeClass `nvidia`, a request is enough:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: 1
+```
+
+Pods that keep using the RuntimeClass `nvidia` work as well, unless the admission policy is enabled.
+
+The alternative `envvar` sets `NVIDIA_VISIBLE_DEVICES` like the NVIDIA device plugin does by default. It needs the RuntimeClass `nvidia` and cannot keep pods away from reserved GPUs: a pod that sets `NVIDIA_VISIBLE_DEVICES` itself sees every GPU of the node.
+
+### Why the admission policy
+
+The NVIDIA runtime hands a container every GPU named in `NVIDIA_VISIBLE_DEVICES`, without asking the kubelet. Any pod with the RuntimeClass `nvidia` could therefore reach a reserved GPU without requesting one. The admission policy `<release>-gpu-access` rejects pods that use the RuntimeClass `nvidia` or set `NVIDIA_VISIBLE_DEVICES`. The release namespace and the namespaces in `nodeAgent.devicePlugin.admissionPolicy.exemptNamespaces`, by default `kube-system`, are exempt.
+
+Privileged pods and pods that mount `/dev/nvidia*` from the host can reach every GPU in any case. Keep them out of namespaces that run regular workloads, for example with the Pod Security Standard `baseline`.
+
+### Limitations
+
+Compared with the NVIDIA device plugin, the Kybernate device plugin does not yet offer:
+
+- MIG partitions, time-slicing and MPS. Every GPU is offered as a whole.
+- A preferred allocation that picks GPUs connected through NVLink for multi-GPU pods.
+- Health checks through XID errors. A failing GPU stays offered.
+
+### Back to the NVIDIA device plugin
+
+Disable `nodeAgent.devicePlugin.enabled` and install the NVIDIA device plugin again, as in the guide of your Kubernetes distribution.
 
 ## Update
 

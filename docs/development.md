@@ -94,7 +94,7 @@ Kybernate follows [Semantic Versioning](https://semver.org/). All components and
 | --- | --- |
 | `v0.1.0` | GPU inventory as `GPUNode` resources |
 | `v0.2.0` | GPUs blocked by kubelet allocation, reservations that wait for the release, immediate reaction to changes, CRD upgraded with the chart |
-| `v0.3.0` | Enforcement: reserved GPUs are no longer offered as `nvidia.com/gpu` |
+| `v0.3.0` | Enforcement: the Kybernate device plugin offers `nvidia.com/gpu` without the reserved GPUs, optional admission policy against `NVIDIA_VISIBLE_DEVICES` |
 
 ## Testing on a GPU cluster without the registry
 

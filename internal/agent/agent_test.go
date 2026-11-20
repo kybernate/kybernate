@@ -21,6 +21,7 @@ import (
 
 	"github.com/kybernate/kybernate/api/v1alpha1"
 	"github.com/kybernate/kybernate/internal/allocation"
+	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
 )
 
@@ -330,6 +331,31 @@ func TestSyncReservationWaitsForRelease(t *testing.T) {
 	}
 	if a.nextInterval() != time.Minute {
 		t.Fatalf("interval after the release = %s, want 1m", a.nextInterval())
+	}
+}
+
+type recordingSink struct{ devices []deviceplugin.Device }
+
+func (r *recordingSink) Update(devices []deviceplugin.Device) { r.devices = devices }
+
+func TestSyncHandsReservationsToTheDevicePlugin(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1", UID: "node-uid"}}
+	existing := &v1alpha1.GPUNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1"},
+		Spec:       v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a"}},
+	}
+	c := newClient(t, node, existing)
+	sink := &recordingSink{}
+	a := newAgent(c, fakeSource{node: twoGPUs()}, &fakeAllocations{allocs: trainerOnGPUA()})
+	a.Devices = sink
+
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// GPU-a is still held by the trainer, but already withheld from new pods.
+	want := []deviceplugin.Device{{ID: "GPU-a", Reserved: true}, {ID: "GPU-b"}}
+	if len(sink.devices) != 2 || sink.devices[0] != want[0] || sink.devices[1] != want[1] {
+		t.Fatalf("devices = %+v, want %+v", sink.devices, want)
 	}
 }
 
