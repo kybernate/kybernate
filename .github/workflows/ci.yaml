@@ -38,9 +38,53 @@ jobs:
       - name: Lint and render
         run: make helm-lint
 
+  # After a merge to main: derive the next version from the Conventional
+  # Commit messages, tag it and create a GitHub release. For a tag pushed by
+  # hand: create the GitHub release for it. Tags created here do not trigger
+  # another workflow run, so images and chart are built further down in this run.
+  release:
+    name: Release
+    if: github.event_name == 'push'
+    needs: [go, helm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Determine version, tag and release
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(hack/next-version.sh)"
+            if [[ -z "$VERSION" ]]; then
+              echo "No feat, fix, perf or breaking change since the last tag, no release."
+            else
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -a "v${VERSION}" -m "v${VERSION}" "$GITHUB_SHA"
+              git push origin "v${VERSION}"
+            fi
+          fi
+          if [[ -n "$VERSION" ]] && ! gh release view "v${VERSION}" >/dev/null 2>&1; then
+            gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes --verify-tag
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
   image:
     name: Image node-agent
-    needs: [go, helm]
+    needs: [go, helm, release]
+    if: ${{ !cancelled() && needs.go.result == 'success' && needs.helm.result == 'success' && needs.release.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,7 +109,7 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
             type=sha
-            type=semver,pattern={{version}}
+            type=raw,value=${{ needs.release.outputs.version }},enable=${{ needs.release.outputs.version != '' }}
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -75,15 +119,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
+            VERSION=${{ needs.release.outputs.version || steps.meta.outputs.version }}
             COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   chart:
     name: Publish Helm chart
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [image]
+    needs: [release, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' && needs.release.outputs.version != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,8 +138,8 @@ jobs:
       - name: Package and push to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           helm package charts/kybernate --version "$VERSION" --app-version "$VERSION"
           echo "$GHCR_TOKEN" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
           helm push "kybernate-${VERSION}.tgz" oci://ghcr.io/kybernate/charts
