@@ -60,5 +60,6 @@ The allocatable count follows a reservation within a few seconds, because the ku
 | Kubelet restart on `rtx3060dual-201` | passed: socket removed and plugin registered again within the same second |
 | Waiting for the NVIDIA device plugin, on `rtx3060dual` | passed: warning logged, no registration and allocatable 0 while the socket was served, registration within 5 s after it was gone |
 | Upgrade from 0.1.0 | passed: `hack/e2e/chart.sh` against K3s v1.37.2, 24 passed, 0 failed |
+| Conditions `DevicePluginReady` and `CDIReady` (after `v0.2.0`) | passed: `Registered` and `Complete` on all three nodes; with a socket of the NVIDIA device plugin on `rtx3060dual`, `DevicePluginReady=False` with reason `ConflictingPlugin` and a message naming the socket, back to `Registered` at once when it was gone |
 
 **Finding:** The first version of `phase2.sh` reported T10 wrongly, because a helper function returned a non-zero status into a pipeline under `set -o pipefail`. The fixed script also prints the policy's rejection message, so a rejection for another reason would show up.

@@ -6,6 +6,7 @@ Every phase ends with documented, reproducible acceptance tests on real hardware
 | --- | --- | --- | --- |
 | 1 – Ubuntu LTS and K3s | [Phase 1](phase-1.md) | 2026-11-20 | passed, one known warning (runc of K3s) |
 | 2 – GPU inventory and reservation | [Phase 2](phase-2.md) | 2026-11-20, release `v0.2.0` | passed |
+| 3 – Minimal dashboard | [Phase 3](https://github.com/kybernate/dashboard/blob/main/docs/acceptance.md), in the dashboard repository | 2026-11-20 | passed |
 
 ## Test cluster
 
