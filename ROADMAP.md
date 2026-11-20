@@ -40,8 +40,12 @@ A service on every GPU node, with an API, that knows each GPU and decides whethe
   - total and used VRAM
   - driver version
   - interconnect to other GPUs: NVLink, NVSwitch, PCIe P2P, PCIe via CPU
+  - whether MIG is enabled
 - **Reservation:** GPUs are reserved for Kybernate or released for regular pods, declaratively through a custom resource. A plain YAML manifest is enough to configure a node.
 - **Enforcement:** Every GPU can be reserved. A GPU allocated to a regular pod through `nvidia.com/gpu` stays with that pod and joins the Kybernate pool only after the pod has ended. Until then the status shows `PendingReservation`. From the moment of the reservation on, the GPU is no longer offered as `nvidia.com/gpu`, so it cannot go to the next regular pod when it is released.
+- **Kybernate device plugin:** It offers whole GPUs as `nvidia.com/gpu` and replaces the NVIDIA device plugin.
+  - Pods with several GPUs get GPUs connected through NVLink, if available.
+  - GPUs with MIG enabled are not offered.
 - **Access control:** ClusterRoles for reading the inventory and for changing reservations.
 - This service becomes the node agent in phase 4.
 
@@ -158,6 +162,8 @@ RHEL and compatible distributions such as Rocky Linux and AlmaLinux, in their cu
 - **Runtime profile:** It includes the operating system and kernel. A checkpoint does not move between an Ubuntu node and a RHEL node.
 
 ## Under evaluation
+
+- **MIG:** A MIG partition could become the unit of a Kybernate pool, so that small models are switched on a share of a large GPU with hardware isolation. A prerequisite is a test on MIG hardware showing that `cuda-checkpoint` checkpoints a process on a MIG partition and restores it on another partition with the same profile. Then the reservation, the inventory and the device plugin would handle MIG devices. Time-slicing and MPS are not planned: they share a GPU without isolating its memory, which works against exclusive GPU leases.
 
 - **CRI-O and OpenShift:** The warm tier works without changes to the runtime. The cold tier needs a different integration path than the containerd shim.
 - **CRIU's own CUDA plugin:** It gained GPU device mapping on restore in CRIU 4.3. It could replace parts of the orchestration that Kybernate does itself today.

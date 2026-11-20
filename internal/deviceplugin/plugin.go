@@ -6,6 +6,9 @@
 // those whose reservation still waits for a regular pod to release them, are
 // reported as unhealthy, so the kubelet no longer allocates them to new pods.
 // Pods that already hold such a GPU keep it.
+//
+// For pods with more than one GPU, the plugin prefers GPUs that are connected
+// through NVLink, see GetPreferredAllocation.
 package deviceplugin
 
 import (
@@ -13,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -53,6 +57,14 @@ type Device struct {
 	ID string
 	// Reserved GPUs are not offered to regular pods.
 	Reserved bool
+	// Links rates the connection to the other GPUs of the node by their ID,
+	// see LinkScore. A higher score is a faster connection. The map must not
+	// be changed after it was handed to Update.
+	Links map[string]int
+}
+
+func deviceEqual(a, b Device) bool {
+	return a.ID == b.ID && a.Reserved == b.Reserved && maps.Equal(a.Links, b.Links)
 }
 
 // Plugin is a kubelet device plugin for whole GPUs.
@@ -106,7 +118,7 @@ func (p *Plugin) init() {
 func (p *Plugin) Update(devices []Device) {
 	p.init()
 	p.mu.Lock()
-	if !slices.Equal(p.devices, devices) {
+	if !slices.EqualFunc(p.devices, devices, deviceEqual) {
 		p.devices = slices.Clone(devices)
 		close(p.changed)
 		p.changed = make(chan struct{})
@@ -142,9 +154,33 @@ func (p *Plugin) snapshot() ([]*pluginapi.Device, <-chan struct{}) {
 	return out, p.changed
 }
 
+// options tells the kubelet to ask for a preferred allocation before it
+// allocates GPUs.
+func options() *pluginapi.DevicePluginOptions {
+	return &pluginapi.DevicePluginOptions{GetPreferredAllocationAvailable: true}
+}
+
 // GetDevicePluginOptions implements the device plugin API.
 func (p *Plugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
-	return &pluginapi.DevicePluginOptions{}, nil
+	return options(), nil
+}
+
+// GetPreferredAllocation picks, for every container, the GPUs that are best
+// connected among each other, see Prefer. The kubelet treats the answer as a
+// hint and allocates other GPUs if it cannot follow it.
+func (p *Plugin) GetPreferredAllocation(_ context.Context, req *pluginapi.PreferredAllocationRequest) (*pluginapi.PreferredAllocationResponse, error) {
+	p.mu.Lock()
+	devices := slices.Clone(p.devices)
+	p.mu.Unlock()
+
+	resp := &pluginapi.PreferredAllocationResponse{}
+	for _, creq := range req.GetContainerRequests() {
+		ids := Prefer(devices, creq.GetAvailableDeviceIDs(), creq.GetMustIncludeDeviceIDs(), int(creq.GetAllocationSize()))
+		p.Log.Info("preferred allocation", "available", creq.GetAvailableDeviceIDs(), "mustInclude", creq.GetMustIncludeDeviceIDs(),
+			"size", creq.GetAllocationSize(), "preferred", ids)
+		resp.ContainerResponses = append(resp.ContainerResponses, &pluginapi.ContainerPreferredAllocationResponse{DeviceIDs: ids})
+	}
+	return resp, nil
 }
 
 // ListAndWatch sends the device list and every change of it to the kubelet.
@@ -271,7 +307,7 @@ func (p *Plugin) register(ctx context.Context) error {
 		Version:      pluginapi.Version,
 		Endpoint:     p.Endpoint,
 		ResourceName: p.ResourceName,
-		Options:      &pluginapi.DevicePluginOptions{},
+		Options:      options(),
 	})
 	if err != nil {
 		return fmt.Errorf("registering %s with the kubelet at %s: %w", p.ResourceName, kubelet, err)

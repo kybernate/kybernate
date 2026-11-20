@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 	"time"
 
@@ -353,9 +354,31 @@ func TestSyncHandsReservationsToTheDevicePlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	// GPU-a is still held by the trainer, but already withheld from new pods.
-	want := []deviceplugin.Device{{ID: "GPU-a", Reserved: true}, {ID: "GPU-b"}}
-	if len(sink.devices) != 2 || sink.devices[0] != want[0] || sink.devices[1] != want[1] {
+	nvlink := deviceplugin.LinkScore(inventory.Link{Type: inventory.LinkNVLink, NVLinks: 4, P2P: true})
+	want := []deviceplugin.Device{
+		{ID: "GPU-a", Reserved: true, Links: map[string]int{"GPU-b": nvlink}},
+		{ID: "GPU-b", Links: map[string]int{"GPU-a": nvlink}},
+	}
+	if !reflect.DeepEqual(sink.devices, want) {
 		t.Fatalf("devices = %+v, want %+v", sink.devices, want)
+	}
+}
+
+func TestMIGEnabledGPUs(t *testing.T) {
+	inv := twoGPUs()
+	inv.GPUs[1].MIGEnabled = true
+	spec := v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a", "GPU-b"}}
+
+	devices := PluginDevices(inv, spec)
+	if len(devices) != 1 || devices[0].ID != "GPU-a" {
+		t.Fatalf("a GPU with MIG enabled was offered as a whole: %+v", devices)
+	}
+	if got := ReservedMIGGPUs(inv, spec); len(got) != 1 || got[0] != "GPU-b" {
+		t.Fatalf("ReservedMIGGPUs = %v", got)
+	}
+	status := BuildStatus(inv, nil, spec, v1alpha1.GPUNodeStatus{}, metav1.Now())
+	if status.GPUs[0].MIGEnabled || !status.GPUs[1].MIGEnabled {
+		t.Fatalf("migEnabled not reported: %+v", status.GPUs)
 	}
 }
 

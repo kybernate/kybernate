@@ -38,7 +38,10 @@ type GPU struct {
 	MemoryUsedBytes   uint64
 	// ComputeProcesses is the number of processes that currently use the GPU.
 	ComputeProcesses int
-	Links            []Link
+	// MIGEnabled reports whether the GPU is partitioned with MIG. Such a GPU
+	// can only be used through its MIG devices, not as a whole.
+	MIGEnabled bool
+	Links      []Link
 }
 
 // Node is the GPU inventory of one node.

@@ -229,6 +229,12 @@ spec:
                         of the last inventory.
                       format: int64
                       type: integer
+                    migEnabled:
+                      description: |-
+                        MIGEnabled reports whether the GPU is partitioned with MIG. Kybernate
+                        does not manage MIG devices yet: its device plugin does not offer such a
+                        GPU, and reserving it has no effect.
+                      type: boolean
                     name:
                       description: Name is the product name, for example "NVIDIA RTX
                         A6000".

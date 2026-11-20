@@ -95,6 +95,7 @@ func BuildStatus(inv inventory.Node, allocs Allocations, spec v1alpha1.GPUNodeSp
 			ComputeCapability: gpu.ComputeCapability,
 			MemoryTotalBytes:  int64(gpu.MemoryTotalBytes),
 			MemoryUsedBytes:   int64(gpu.MemoryUsedBytes),
+			MIGEnabled:        gpu.MIGEnabled,
 			ProcessCount:      int32(gpu.ComputeProcesses),
 			AllocatedTo:       slices.Clone(allocatedTo),
 			State:             state,
@@ -136,10 +137,39 @@ func FailedStatus(previous v1alpha1.GPUNodeStatus, reason string, err error) v1a
 // PluginDevices lists the GPUs for the device plugin. Every GPU in the spec
 // counts as reserved from the moment it is listed there, also while it still
 // waits for a regular pod to release it, so it cannot go to the next pod.
+//
+// GPUs with MIG enabled are left out: as a whole they offer no compute to a
+// container, and the plugin does not offer MIG devices yet.
 func PluginDevices(inv inventory.Node, spec v1alpha1.GPUNodeSpec) []deviceplugin.Device {
 	out := make([]deviceplugin.Device, 0, len(inv.GPUs))
 	for _, gpu := range inv.GPUs {
-		out = append(out, deviceplugin.Device{ID: gpu.UUID, Reserved: slices.Contains(spec.ReservedGPUs, gpu.UUID)})
+		if gpu.MIGEnabled {
+			continue
+		}
+		var links map[string]int
+		for _, link := range gpu.Links {
+			if links == nil {
+				links = make(map[string]int, len(gpu.Links))
+			}
+			links[link.PeerUUID] = deviceplugin.LinkScore(link)
+		}
+		out = append(out, deviceplugin.Device{
+			ID:       gpu.UUID,
+			Reserved: slices.Contains(spec.ReservedGPUs, gpu.UUID),
+			Links:    links,
+		})
+	}
+	return out
+}
+
+// ReservedMIGGPUs returns the reserved GPUs that have MIG enabled. Kybernate
+// cannot use them yet.
+func ReservedMIGGPUs(inv inventory.Node, spec v1alpha1.GPUNodeSpec) []string {
+	var out []string
+	for _, gpu := range inv.GPUs {
+		if gpu.MIGEnabled && slices.Contains(spec.ReservedGPUs, gpu.UUID) {
+			out = append(out, gpu.UUID)
+		}
 	}
 	return out
 }

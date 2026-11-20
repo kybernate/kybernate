@@ -98,6 +98,11 @@ type GPU struct {
 	// MemoryUsedBytes is the VRAM in use at the time of the last inventory.
 	// +optional
 	MemoryUsedBytes int64 `json:"memoryUsedBytes,omitempty"`
+	// MIGEnabled reports whether the GPU is partitioned with MIG. Kybernate
+	// does not manage MIG devices yet: its device plugin does not offer such a
+	// GPU, and reserving it has no effect.
+	// +optional
+	MIGEnabled bool `json:"migEnabled,omitempty"`
 	// Links describes the connections to the other GPUs of the node.
 	// +optional
 	// +listType=map

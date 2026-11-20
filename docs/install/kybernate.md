@@ -168,6 +168,14 @@ The Kybernate device plugin replaces the NVIDIA device plugin. Both register the
 
 Pods already running keep their GPUs during the switch.
 
+### Pods with several GPUs
+
+Before the kubelet allocates GPUs, it asks the device plugin which GPUs it prefers. The plugin picks the GPUs that are connected best among each other, in this order: NVLink (more links are better), PCIe switch, PCIe host bridge, across CPU sockets. A pod with one GPU preferably gets a GPU whose NVLink peer is already in use, so that free NVLink pairs stay together for later pods. The connections are those under `links` in the status of the `GPUNode`.
+
+### GPUs with MIG
+
+A GPU partitioned with MIG shows `migEnabled: true` in the status of its `GPUNode`. The Kybernate device plugin does not offer such a GPU, because as a whole it gives a container no compute, and it does not offer MIG partitions yet. Reserving it has no effect, and the node agent logs a warning.
+
 ### How GPUs reach the container
 
 With the default `nodeAgent.devicePlugin.deviceListStrategy: cdi`, containerd injects the allocated GPUs as CDI devices. GPU pods no longer need the RuntimeClass `nvidia`, a request is enough:
@@ -192,8 +200,7 @@ Privileged pods and pods that mount `/dev/nvidia*` from the host can reach every
 
 Compared with the NVIDIA device plugin, the Kybernate device plugin does not yet offer:
 
-- MIG partitions, time-slicing and MPS. Every GPU is offered as a whole.
-- A preferred allocation that picks GPUs connected through NVLink for multi-GPU pods.
+- MIG partitions, time-slicing and MPS. Every GPU is offered as a whole. GPUs with MIG enabled are not offered at all.
 - Health checks through XID errors. A failing GPU stays offered.
 
 ### Back to the NVIDIA device plugin

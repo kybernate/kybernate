@@ -64,6 +64,7 @@ type Agent struct {
 	ready       atomic.Bool
 	pending     atomic.Bool
 	lastUnknown string
+	lastMIG     string
 }
 
 // Ready reports whether the inventory has been published at least once.
@@ -156,6 +157,7 @@ func (a *Agent) Sync(ctx context.Context) error {
 	if a.Devices != nil {
 		a.Devices.Update(PluginDevices(inv, gpuNode.Spec))
 	}
+	a.reportReservedMIG(ReservedMIGGPUs(inv, gpuNode.Spec))
 	a.pending.Store(HasPending(gpuNode.Status))
 	a.logTransitions(previous, gpuNode.Status)
 	if !a.ready.Swap(true) {
@@ -269,6 +271,18 @@ func (a *Agent) reportUnknown(unknown []string) {
 	a.lastUnknown = key
 	if len(unknown) > 0 {
 		a.Log.Warn("the kubelet reports GPU devices that match no GPU of the node", "deviceIDs", unknown)
+	}
+}
+
+// reportReservedMIG logs reserved GPUs with MIG enabled, once per distinct set.
+func (a *Agent) reportReservedMIG(uuids []string) {
+	key := strings.Join(uuids, ",")
+	if key == a.lastMIG {
+		return
+	}
+	a.lastMIG = key
+	if len(uuids) > 0 {
+		a.Log.Warn("reserved GPUs have MIG enabled; Kybernate does not support MIG yet and cannot use them", "uuids", uuids)
 	}
 }
 
