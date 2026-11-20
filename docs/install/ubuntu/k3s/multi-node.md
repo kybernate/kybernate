@@ -156,6 +156,10 @@ On every node, extend the host inventory as in [step 5 of the single-node guide]
 - [ ] `sudo k3s etcd-snapshot ls` lists snapshots.
 - [ ] Every node has an up-to-date host inventory.
 
+## Next step
+
+The cluster is ready for Kybernate: [Installing Kybernate](../../kybernate.md).
+
 ## Updates
 
 Update **one node at a time**, so etcd keeps its quorum:

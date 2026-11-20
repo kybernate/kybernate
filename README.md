@@ -157,6 +157,7 @@ Because a frozen model generation can be resumed more than once, Kybernate can a
   - [Host prerequisites](docs/install/ubuntu/host-basis.md): NVIDIA driver, NVIDIA Container Toolkit, CRIU, `cuda-checkpoint`
   - [K3s, single node](docs/install/ubuntu/k3s/single-node.md)
   - [K3s, multi node](docs/install/ubuntu/k3s/multi-node.md): embedded etcd, every node is control plane and worker
+- [Installing Kybernate](docs/install/kybernate.md): Helm chart from `oci://ghcr.io/kybernate/charts/kybernate`, GPU inventory, reservations
 
 Every component is installed in its latest release from its upstream source. Nothing is pinned.
 
