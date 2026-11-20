@@ -31,7 +31,7 @@ On K3s, run it on a server with `KUBECTL="sudo k3s kubectl"`. The node needs at 
 | --- | --- |
 | Kubelet restart | `sudo systemctl restart k3s` on a GPU node. The log of its node agent shows `device plugin socket removed, registering again` and `device plugin registered with the kubelet` within 5 seconds. |
 | Waiting for the NVIDIA device plugin | With a socket `nvidia-gpu-<id>.sock` that accepts connections in `/var/lib/kubelet/device-plugins`, the node agent logs a warning and does not register. Once the socket is gone, it registers. |
-| Upgrade from 0.1.0 | Automated in CI with [`hack/e2e/chart.sh`](../../hack/e2e/chart.sh), see [Releasing](../releasing.md). |
+| Upgrade from the latest release | Automated in CI with [`hack/e2e/chart.sh`](../../hack/e2e/chart.sh), see [Releasing](../releasing.md). |
 | NVLink-aware allocation, MIG | Not testable on the test cluster, which has neither NVLink nor MIG. Covered by unit tests in `internal/deviceplugin` and `internal/agent`. |
 
 ## Results of 2026-11-20, release `v0.2.0`
@@ -59,7 +59,7 @@ The allocatable count follows a reservation within a few seconds, because the ku
 | --- | --- |
 | Kubelet restart on `rtx3060dual-201` | passed: socket removed and plugin registered again within the same second |
 | Waiting for the NVIDIA device plugin, on `rtx3060dual` | passed: warning logged, no registration and allocatable 0 while the socket was served, registration within 5 s after it was gone |
-| Upgrade from 0.1.0 | passed: `hack/e2e/chart.sh` against K3s v1.37.2, 24 passed, 0 failed |
+| Upgrade from the latest release | see the run below |
 | Conditions `DevicePluginReady` and `CDIReady` (after `v0.2.0`) | passed: `Registered` and `Complete` on all three nodes; with a socket of the NVIDIA device plugin on `rtx3060dual`, `DevicePluginReady=False` with reason `ConflictingPlugin` and a message naming the socket, back to `Registered` at once when it was gone |
 
 **Finding:** The first version of `phase2.sh` reported T10 wrongly, because a helper function returned a non-zero status into a pipeline under `set -o pipefail`. The fixed script also prints the policy's rejection message, so a rejection for another reason would show up.

@@ -2,8 +2,8 @@
 # End-to-end test of the Helm chart on a Kubernetes cluster without GPUs, for
 # example k3d in CI. It covers what unit tests and `helm template` cannot:
 #
-#   - the upgrade from the previous release, including the hand-over of the
-#     CRD documented in docs/install/kybernate.md
+#   - the upgrade from the latest published release, which must keep the
+#     GPUNodes and their reservations and bring the CRD up to date
 #   - that the API server keeps every status field of the current API
 #     (fields missing from the CRD would be pruned silently)
 #   - that the admission policy rejects pods bypassing the device plugin
@@ -15,13 +15,13 @@
 #   KUBECTL       kubectl command (default kubectl)
 #   HELM          helm command (default helm)
 #   CHART         path of the chart to test (default charts/kybernate)
-#   FROM_VERSION  release to upgrade from (default 0.1.0)
+#   FROM_VERSION  release to upgrade from (default: the latest published release)
 set -uo pipefail
 
 KUBECTL=${KUBECTL:-kubectl}
 HELM=${HELM:-helm}
 CHART=${CHART:-charts/kybernate}
-FROM_VERSION=${FROM_VERSION:-0.1.0}
+FROM_VERSION=${FROM_VERSION:-}
 NS=kybernate-system
 REL=kybernate
 
@@ -45,9 +45,12 @@ die() { echo "FATAL $*" >&2; exit 1; }
 crd_has() { k get crd gpunodes.kybernate.io -o json | grep -q "\"$1\""; }
 jp() { k get "$@" 2>/dev/null; }
 
-echo "--- install release $FROM_VERSION"
-h install "$REL" oci://ghcr.io/kybernate/charts/kybernate --version "$FROM_VERSION" \
-	--namespace "$NS" --create-namespace --wait --timeout 3m >/dev/null || die "installing $FROM_VERSION failed"
+from=${FROM_VERSION:-latest}
+echo "--- install release $from"
+version_arg=()
+[[ -n "$FROM_VERSION" ]] && version_arg=(--version "$FROM_VERSION")
+h install "$REL" oci://ghcr.io/kybernate/charts/kybernate ${version_arg[@]+"${version_arg[@]}"} \
+	--namespace "$NS" --create-namespace --wait --timeout 3m >/dev/null || die "installing release $from failed"
 k wait --for=condition=Established crd/gpunodes.kybernate.io --timeout=60s >/dev/null || die "CRD not established"
 k apply -f - >/dev/null <<'EOF' || die "creating a GPUNode failed"
 apiVersion: kybernate.io/v1alpha1
@@ -57,17 +60,13 @@ metadata:
 spec:
   reservedGPUs: [GPU-e2e-0]
 EOF
-ok "release $FROM_VERSION installed with a GPUNode"
-
-echo "--- hand the CRD over to the release, as documented"
-k annotate crd gpunodes.kybernate.io meta.helm.sh/release-name="$REL" meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
-k label crd gpunodes.kybernate.io app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+ok "release $from installed with a GPUNode"
 
 echo "--- upgrade to $CHART"
 if h upgrade "$REL" "$CHART" --namespace "$NS" --reset-values --wait --timeout 3m >/dev/null; then
-	ok "upgrade from $FROM_VERSION succeeds"
+	ok "upgrade from release $from succeeds"
 else
-	bad "upgrade from $FROM_VERSION fails"
+	bad "upgrade from release $from fails"
 	die "cannot continue without the upgraded chart"
 fi
 check "the CRD carries helm.sh/resource-policy: keep" bash -c "$KUBECTL get crd gpunodes.kybernate.io -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}' | grep -qx keep"

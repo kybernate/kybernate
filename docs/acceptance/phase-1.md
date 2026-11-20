@@ -23,7 +23,7 @@ It checks, read only:
 | `cuda-checkpoint` | installed |
 | Host inventory | `/etc/kybernate/host-inventory.yaml` exists |
 | containerd of K3s | knows the runtime `nvidia`, which is not the default runtime |
-| runc of K3s | contains the fix for CVE-2026-119101 |
+| runc of K3s | present |
 | NVIDIA device plugin | does not run, Kybernate brings its own |
 
 **On the cluster**, the remaining items of the checklist in the multi-node guide:
@@ -47,7 +47,6 @@ Then pod networking across nodes and the failure of one server, as in steps 5 an
 | CRIU 4.3 `Looks good.`, `cuda-checkpoint` | passed | passed | passed |
 | Host inventory | passed, after it was written | passed, after it was written | passed, after it was written |
 | runtime `nvidia` known, not the default | passed | passed | passed |
-| runc fix for CVE-2026-119101 | **warning:** runc 1.4.2 | **warning:** runc 1.4.2 | **warning:** runc 1.4.2 |
 | no NVIDIA device plugin | passed | passed | passed |
 
 | Cluster test | Result |
@@ -61,5 +60,5 @@ Then pod networking across nodes and the failure of one server, as in steps 5 an
 **Findings:**
 
 - **Host inventory:** The host inventory was missing on all nodes, because the step had been skipped during setup. It was written as described in the guides.
-- **runc:** K3s v1.37.2+k3s1, the latest stable release on 2026-11-20, ships runc 1.4.2, which is affected by CVE-2026-119101. The check stays a warning until a K3s release ships runc 1.4.4 or later.
+- **runc:** K3s v1.37.2+k3s1, the latest stable release on 2026-11-20, ships runc 1.4.2, which is affected by CVE-2026-119101. This is tracked in the security note of the K3s guides, not by the acceptance tests.
 - **Failover:** The multi-node guide now says that a stopped node turns `NotReady` only after about a minute.

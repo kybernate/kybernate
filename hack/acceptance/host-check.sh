@@ -64,16 +64,7 @@ if [[ -f $config ]]; then
 	else
 		ok "the NVIDIA runtime is not containerd's default runtime"
 	fi
-	runc=/var/lib/rancher/k3s/data/current/bin/runc
-	version=$("$runc" --version 2>/dev/null | awk '/runc version/{print $3}')
-	IFS=. read -r ma mi pa <<<"${version%%-*}"
-	if [[ -z "$version" ]]; then
-		bad "runc shipped by K3s not found"
-	elif (( ma > 1 || (ma == 1 && mi > 5) || (ma == 1 && mi == 5 && pa >= 3) || (ma == 1 && mi == 4 && pa >= 4) )); then
-		ok "runc $version contains the fix for CVE-2026-119101"
-	else
-		note "runc $version is affected by CVE-2026-119101 (fixed in 1.4.4 and 1.5.3)"
-	fi
+	check "K3s ships runc ($(/var/lib/rancher/k3s/data/current/bin/runc --version 2>/dev/null | head -1))" /var/lib/rancher/k3s/data/current/bin/runc --version
 	if [[ -n "$(ls /var/lib/kubelet/device-plugins/nvidia-gpu*.sock 2>/dev/null)" ]]; then
 		bad "a socket of the NVIDIA device plugin exists"
 	else

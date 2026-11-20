@@ -15,13 +15,19 @@
 #   NS          namespace for the test pods (default kybernate-acceptance)
 #   IMAGE       image with a shell (default ubuntu)
 #   CUDA_IMAGE  a CUDA base image, which sets NVIDIA_VISIBLE_DEVICES=all
+#               (default: the newest nvidia/cuda base image on Docker Hub)
 set -uo pipefail
 
 NODE=${1:?usage: $0 <gpu-node>}
 KUBECTL=${KUBECTL:-kubectl}
 NS=${NS:-kybernate-acceptance}
 IMAGE=${IMAGE:-ubuntu}
-CUDA_IMAGE=${CUDA_IMAGE:-nvidia/cuda:13.5.0-base-ubuntu24.04}
+latest_cuda_image() {
+	curl -fsSL 'https://hub.docker.com/v2/repositories/nvidia/cuda/tags?page_size=100&ordering=last_updated&name=-base-ubuntu' |
+		grep -oE '"name": *"[0-9]+\.[0-9]+\.[0-9]+-base-ubuntu[0-9]+\.04"' | cut -d'"' -f4 | sort -V | tail -1
+}
+CUDA_IMAGE=${CUDA_IMAGE:-nvidia/cuda:$(latest_cuda_image)}
+[[ "$CUDA_IMAGE" == *: ]] && { echo "cannot find a CUDA base image, set CUDA_IMAGE" >&2; exit 2; }
 AGENT_NS=${AGENT_NS:-kybernate-system}
 
 k() { $KUBECTL "$@"; }
