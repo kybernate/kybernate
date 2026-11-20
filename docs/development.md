@@ -97,7 +97,7 @@ Kybernate follows [Semantic Versioning](https://semver.org/). All components and
 
 ## Acceptance and end-to-end tests
 
-Every phase ends with acceptance tests on the GPU test cluster, see [Acceptance](acceptance/README.md). The scripts live in `hack/acceptance`. The Helm chart is additionally tested on k3d in CI with `hack/e2e/chart.sh`. To run it locally against any cluster without GPUs:
+Every phase ends with acceptance tests on a GPU cluster, see [Acceptance](acceptance/README.md). The scripts live in `hack/acceptance`. The Helm chart is additionally tested on k3d in CI with `hack/e2e/chart.sh`. To run it locally against any cluster without GPUs:
 
 ```bash
 k3d cluster create e2e --wait
@@ -106,7 +106,7 @@ hack/e2e/chart.sh
 
 ## Testing on a GPU cluster without the registry
 
-For a development build, build the image on an amd64 GPU node and import it into the containerd of K3s on every node:
+For a development build, build the image on one of the GPU nodes, so that it matches their platform, and import it into the containerd of K3s on every node:
 
 ```bash
 docker build -t ghcr.io/kybernate/node-agent:dev .

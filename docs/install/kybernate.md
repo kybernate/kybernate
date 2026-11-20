@@ -80,8 +80,8 @@ Every GPU node appears with its number of GPUs, the GPUs in the Kybernate pool, 
 
 ```text
 NAME     GPUS   RESERVED   PENDING   DRIVER      AGE
-gpu-01   2                           615.71.09   1m
-gpu-02   2                           615.71.09   1m
+gpu-01   2                           <version>   1m
+gpu-02   2                           <version>   1m
 ```
 
 Every GPU node offers its GPUs as `nvidia.com/gpu`, now through Kybernate:

@@ -54,7 +54,7 @@ func trainerOnGPUA() []allocation.Allocation {
 // Two GPUs connected through NVLink. GPU 0 runs a process, GPU 1 is idle.
 func twoGPUs() inventory.Node {
 	return inventory.Node{
-		DriverVersion:     "615.71.09",
+		DriverVersion:     "999.99.99",
 		CUDADriverVersion: "13.2",
 		GPUs: []inventory.GPU{
 			{
@@ -137,7 +137,7 @@ func TestBuildStatusFields(t *testing.T) {
 	if len(gpu.Links) != 1 || gpu.Links[0].Type != v1alpha1.LinkTypeNVLink || gpu.Links[0].NVLinks != 4 || !gpu.Links[0].P2P {
 		t.Fatalf("unexpected links: %+v", gpu.Links)
 	}
-	if status.DriverVersion != "615.71.09" || status.CUDADriverVersion != "13.2" {
+	if status.DriverVersion != "999.99.99" || status.CUDADriverVersion != "13.2" {
 		t.Fatalf("unexpected driver fields: %q %q", status.DriverVersion, status.CUDADriverVersion)
 	}
 	if !meta.IsStatusConditionTrue(status.Conditions, ConditionInventoryReady) {

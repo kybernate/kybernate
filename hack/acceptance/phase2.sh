@@ -126,52 +126,56 @@ done
 if (( missing == 0 )); then ok "every GPU node has a GPUNode with InventoryReady=True"; else bad "$missing GPU node(s) without a ready inventory"; fi
 if [[ "$(capacity)" == "$n" && "$(alloc)" == "$n" ]]; then ok "capacity and allocatable nvidia.com/gpu = $n"; else bad "capacity $(capacity), allocatable $(alloc), expected $n"; fi
 
+json_list() { # json_list <uuid...>: a JSON array of the UUIDs
+	local out="" g
+	for g in "$@"; do out+="${out:+,}\"$g\""; done
+	echo "[$out]"
+}
+
 echo "--- T02 a GPU held by a pod counts as Regular"
 gpu_pod holder-a
 expect "pod holder-a runs" 120 is_phase holder-a Running
 expect "the GPU of holder-a is reported with allocatedTo" 15 has_holder holder-a
 a=$(holder holder-a)
-for g in "${gpus[@]}"; do [[ "$g" != "$a" ]] && b=$g && break; done
+others=()
+for g in "${gpus[@]}"; do [[ "$g" != "$a" ]] && others+=("$g"); done
+b=${others[0]}
 expect "its state is Regular" 5 is_state "$a" Regular
 
 echo "--- T03 reserving a held GPU waits for its release"
-reserve "[\"$a\"]"
+reserve "$(json_list "$a")"
 expect "the held GPU becomes PendingReservation" 10 is_state "$a" PendingReservation
 expect "allocatable drops to $((n - 1))" 10 is_alloc $((n - 1))
 holds "holder-a keeps running" 5 is_phase holder-a Running
 
-echo "--- T04 reserving a free GPU takes effect at once"
-reserve "[\"$a\",\"$b\"]"
-expect "the free GPU becomes Reserved" 10 is_state "$b" Reserved
-expect "allocatable drops to $((n - 2))" 10 is_alloc $((n - 2))
+echo "--- T04 reserving free GPUs takes effect at once"
+reserve "$(json_list "$a" "${others[@]}")"
+for g in "${others[@]}"; do
+	expect "free GPU $g becomes Reserved" 10 is_state "$g" Reserved
+done
+expect "allocatable drops to 0" 10 is_alloc 0
 
-if (( n == 2 )); then
-	echo "--- T05 a new pod does not get a reserved GPU"
-	gpu_pod waiter-b
-	holds "pod waiter-b stays Pending while both GPUs are reserved" 15 is_phase waiter-b Pending
+echo "--- T05 a new pod does not get a reserved GPU"
+gpu_pod waiter-b
+holds "pod waiter-b stays Pending while every GPU is reserved" 15 is_phase waiter-b Pending
 
-	echo "--- T06 a released reserved GPU joins the pool, not the waiting pod"
-	k -n "$NS" delete pod holder-a --wait=true >/dev/null
-	expect "the GPU of holder-a becomes Reserved" 20 is_state "$a" Reserved
-	holds "waiter-b still Pending" 10 is_phase waiter-b Pending
+echo "--- T06 a released reserved GPU joins the pool, not the waiting pod"
+k -n "$NS" delete pod holder-a --wait=true >/dev/null
+expect "the GPU of holder-a becomes Reserved" 20 is_state "$a" Reserved
+holds "waiter-b still Pending" 10 is_phase waiter-b Pending
 
-	echo "--- T07 returning a GPU lets the waiting pod start"
-	reserve "[\"$a\"]"
-	expect "waiter-b runs" 90 is_phase waiter-b Running
-	expect "waiter-b holds the returned GPU" 15 bash -c "[[ \"\$($KUBECTL get gpunode $NODE -o jsonpath='{.status.gpus[?(@.allocatedTo[0].name==\"waiter-b\")].uuid}')\" == \"$b\" ]]"
-	k -n "$NS" delete pod waiter-b --wait=true >/dev/null
-else
-	echo "--- T05-T07 need a node with exactly two GPUs, skipped"
-	k -n "$NS" delete pod holder-a --wait=true >/dev/null
-	reserve "[\"$a\"]"
-fi
+echo "--- T07 returning a GPU lets the waiting pod start on it"
+reserve "$(json_list "$a" "${others[@]:1}")"
+expect "waiter-b runs" 90 is_phase waiter-b Running
+expect "waiter-b holds the returned GPU" 15 bash -c "[[ \"\$($KUBECTL get gpunode $NODE -o jsonpath='{.status.gpus[?(@.allocatedTo[0].name==\"waiter-b\")].uuid}')\" == \"$b\" ]]"
+k -n "$NS" delete pod waiter-b --wait=true >/dev/null
 
 echo "--- T08 the node agent restarts without losing reservations"
 agent=$(k -n "$AGENT_NS" get pod -l app.kubernetes.io/name=kybernate --field-selector "spec.nodeName=$NODE" -o name)
 k -n "$AGENT_NS" delete "$agent" --wait=true >/dev/null
 expect "a new node agent is ready" 120 bash -c "[[ \"\$($KUBECTL -n $AGENT_NS get pod -l app.kubernetes.io/name=kybernate --field-selector spec.nodeName=$NODE -o jsonpath='{.items[0].status.containerStatuses[0].ready}')\" == true ]]"
-expect "the reserved GPU is still Reserved" 30 is_state "$a" Reserved
-expect "allocatable is $((n - 1)) after the plugin registered again" 60 is_alloc $((n - 1))
+expect "the reserved GPUs are still Reserved" 30 is_state "$a" Reserved
+expect "allocatable is 1 after the plugin registered again" 60 is_alloc 1
 
 echo "--- T09 releasing all GPUs"
 reserve "[]"
