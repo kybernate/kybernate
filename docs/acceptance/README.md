@@ -5,7 +5,7 @@ Every phase ends with documented, reproducible acceptance tests on real hardware
 | Phase | Tests | Last run | Result |
 | --- | --- | --- | --- |
 | 1 – Ubuntu LTS and K3s | [Phase 1](phase-1.md) | 2026-11-20 | passed |
-| 2 – GPU inventory and reservation | [Phase 2](phase-2.md) | 2026-11-20, release `v0.2.0` | passed |
+| 2 – GPU inventory and reservation | [Phase 2](phase-2.md) | 2026-11-20 | passed |
 | 3 – Minimal dashboard | [Phase 3](https://github.com/kybernate/dashboard/blob/main/docs/acceptance.md), in the dashboard repository | 2026-11-20 | passed |
 
 ## Test cluster
@@ -33,4 +33,4 @@ The GPUs of each node are connected through the CPU's PCIe host bridge, without 
 | --- | --- | --- |
 | [`hack/acceptance/host-check.sh`](../../hack/acceptance/host-check.sh) | on every node, as root | the checklists of the host prerequisites and the K3s guides, read only |
 | [`hack/acceptance/phase2.sh`](../../hack/acceptance/phase2.sh) | against the cluster, with `kubectl` | allocations, reservations, enforcement, admission policy and roles on one GPU node |
-| [`hack/e2e/chart.sh`](../../hack/e2e/chart.sh) | in CI on k3d, without GPUs | upgrade from the latest published release, CRD fields, admission policy, uninstall and reinstall |
+| [`hack/e2e/chart.sh`](../../hack/e2e/chart.sh) | in CI on k3d, without GPUs | installation, CRD fields, admission policy, uninstall and reinstall |

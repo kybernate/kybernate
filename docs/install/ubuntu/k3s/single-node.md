@@ -109,10 +109,6 @@ The cluster is ready for Kybernate: [Installing Kybernate](../../kybernate.md). 
 | runc shipped by K3s | `/var/lib/rancher/k3s/data/current/bin/runc` |
 | kubelet directory | `/var/lib/kubelet` |
 
-## Security note on runc
-
-K3s uses the runc it ships with. Kybernate's restore path depends on runc, so check its version after every K3s update with `sudo /var/lib/rancher/k3s/data/current/bin/runc --version`. In November 2026, CVE-2026-119101 affected `runc restore`. It is fixed from runc 1.4.4 and 1.5.3 on, and K3s v1.37.2+k3s1 still shipped 1.4.2.
-
 ## Updates
 
 **K3s:** Run the install command from step 1 again. It upgrades K3s to the latest stable release and keeps the configuration. Afterwards update the host inventory.

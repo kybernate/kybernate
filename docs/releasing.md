@@ -33,7 +33,7 @@ Before 1.0.0 the API is `v1alpha1` and may change in minor releases.
 
 The workflow `CI` runs on every push to `main`:
 
-1. **Go** and **Helm chart** check the code and the chart. **Chart on k3d** installs the latest published release on a k3d cluster, upgrades it to the new chart and checks CRD, status fields and admission policy, see `hack/e2e/chart.sh`.
+1. **Go** and **Helm chart** check the code and the chart. **Chart on k3d** installs the chart on a k3d cluster and checks the CRD, the status fields, the admission policy, uninstall and reinstall, see `hack/e2e/chart.sh`.
 2. **Release:**
    - computes the next version
    - creates the annotated tag `vX.Y.Z` on the merge commit

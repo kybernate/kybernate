@@ -60,5 +60,4 @@ Then pod networking across nodes and the failure of one server, as in steps 5 an
 **Findings:**
 
 - **Host inventory:** The host inventory was missing on all nodes, because the step had been skipped during setup. It was written as described in the guides.
-- **runc:** K3s v1.37.2+k3s1, the latest stable release on 2026-11-20, ships runc 1.4.2, which is affected by CVE-2026-119101. This is tracked in the security note of the K3s guides, not by the acceptance tests.
 - **Failover:** The multi-node guide now says that a stopped node turns `NotReady` only after about a minute.

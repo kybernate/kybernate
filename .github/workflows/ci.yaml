@@ -48,7 +48,7 @@ jobs:
         run: curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
       - name: Create a cluster
         run: k3d cluster create e2e --wait --k3s-arg "--disable=traefik@server:0"
-      - name: Upgrade from the latest release and check the chart
+      - name: Install the chart and check it
         run: hack/e2e/chart.sh
 
   # After a merge to main: derive the next version from the Conventional

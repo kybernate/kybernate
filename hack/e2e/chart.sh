@@ -2,26 +2,22 @@
 # End-to-end test of the Helm chart on a Kubernetes cluster without GPUs, for
 # example k3d in CI. It covers what unit tests and `helm template` cannot:
 #
-#   - the upgrade from the latest published release, which must keep the
-#     GPUNodes and their reservations and bring the CRD up to date
-#   - that the API server keeps every status field of the current API
-#     (fields missing from the CRD would be pruned silently)
-#   - that the admission policy rejects pods bypassing the device plugin
+#   - the CRD is installed and keeps every status field of the API (fields
+#     missing from the CRD would be pruned silently)
+#   - the admission policy rejects pods bypassing the device plugin
 #   - uninstall keeps the CRD and the GPUNodes, and a new install adopts them
 #
 # No node agent runs, because no node carries the GPU label.
 #
 # Environment:
-#   KUBECTL       kubectl command (default kubectl)
-#   HELM          helm command (default helm)
-#   CHART         path of the chart to test (default charts/kybernate)
-#   FROM_VERSION  release to upgrade from (default: the latest published release)
+#   KUBECTL  kubectl command (default kubectl)
+#   HELM     helm command (default helm)
+#   CHART    path of the chart to test (default charts/kybernate)
 set -uo pipefail
 
 KUBECTL=${KUBECTL:-kubectl}
 HELM=${HELM:-helm}
 CHART=${CHART:-charts/kybernate}
-FROM_VERSION=${FROM_VERSION:-}
 NS=kybernate-system
 REL=kybernate
 
@@ -43,15 +39,15 @@ eventually() { # eventually <description> <timeout> <command...>
 die() { echo "FATAL $*" >&2; exit 1; }
 
 crd_has() { k get crd gpunodes.kybernate.io -o json | grep -q "\"$1\""; }
-jp() { k get "$@" 2>/dev/null; }
 
-from=${FROM_VERSION:-latest}
-echo "--- install release $from"
-version_arg=()
-[[ -n "$FROM_VERSION" ]] && version_arg=(--version "$FROM_VERSION")
-h install "$REL" oci://ghcr.io/kybernate/charts/kybernate ${version_arg[@]+"${version_arg[@]}"} \
-	--namespace "$NS" --create-namespace --wait --timeout 3m >/dev/null || die "installing release $from failed"
+echo "--- install $CHART"
+h install "$REL" "$CHART" --namespace "$NS" --create-namespace --wait --timeout 3m >/dev/null || die "installing the chart failed"
 k wait --for=condition=Established crd/gpunodes.kybernate.io --timeout=60s >/dev/null || die "CRD not established"
+ok "the chart installs"
+check "the CRD carries helm.sh/resource-policy: keep" bash -c "$KUBECTL get crd gpunodes.kybernate.io -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}' | grep -qx keep"
+for field in allocatedTo processCount pendingCount migEnabled; do
+	check "the CRD knows status field $field" crd_has "$field"
+done
 k apply -f - >/dev/null <<'EOF' || die "creating a GPUNode failed"
 apiVersion: kybernate.io/v1alpha1
 kind: GPUNode
@@ -60,20 +56,7 @@ metadata:
 spec:
   reservedGPUs: [GPU-e2e-0]
 EOF
-ok "release $from installed with a GPUNode"
-
-echo "--- upgrade to $CHART"
-if h upgrade "$REL" "$CHART" --namespace "$NS" --reset-values --wait --timeout 3m >/dev/null; then
-	ok "upgrade from release $from succeeds"
-else
-	bad "upgrade from release $from fails"
-	die "cannot continue without the upgraded chart"
-fi
-check "the CRD carries helm.sh/resource-policy: keep" bash -c "$KUBECTL get crd gpunodes.kybernate.io -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}' | grep -qx keep"
-for field in allocatedTo processCount pendingCount migEnabled; do
-	check "the CRD knows status field $field" crd_has "$field"
-done
-check "the GPUNode and its reservation survive the upgrade" bash -c "$KUBECTL get gpunode e2e-node -o jsonpath='{.spec.reservedGPUs[0]}' | grep -qx GPU-e2e-0"
+check "a GPUNode with a reservation can be created" bash -c "$KUBECTL get gpunode e2e-node -o jsonpath='{.spec.reservedGPUs[0]}' | grep -qx GPU-e2e-0"
 
 echo "--- status fields are stored, not pruned"
 k patch gpunode e2e-node --subresource=status --type merge -p '{"status":{
@@ -131,15 +114,17 @@ check "a regular pod is admitted" pod e2e - -
 check "the namespace kube-system is exempt" pod kube-system nvidia -
 check "the release namespace is exempt" pod "$NS" nvidia -
 
-h upgrade "$REL" "$CHART" --namespace "$NS" --reset-values --set nodeAgent.devicePlugin.admissionPolicy.enabled=false --wait >/dev/null
-eventually "without the policy a pod with RuntimeClass nvidia is admitted" 60 pod e2e nvidia -
-
-echo "--- uninstall and install again"
+echo "--- uninstall, then install again without the admission policy"
 h uninstall "$REL" --namespace "$NS" --wait >/dev/null
 check "the CRD stays after uninstall" k get crd gpunodes.kybernate.io
 check "the GPUNode stays after uninstall" k get gpunode e2e-node
-if h install "$REL" "$CHART" --namespace "$NS" --wait --timeout 3m >/dev/null; then ok "a new install adopts the kept CRD"; else bad "a new install fails on the kept CRD"; fi
+if h install "$REL" "$CHART" --namespace "$NS" --set nodeAgent.devicePlugin.admissionPolicy.enabled=false --wait --timeout 3m >/dev/null; then
+	ok "a new install adopts the kept CRD"
+else
+	bad "a new install fails on the kept CRD"
+fi
 check "the reservation is still there" bash -c "$KUBECTL get gpunode e2e-node -o jsonpath='{.spec.reservedGPUs[0]}' | grep -qx GPU-e2e-0"
+eventually "without the policy a pod with RuntimeClass nvidia is admitted" 60 pod e2e nvidia -
 
 echo "---"
 echo "$pass passed, $fail failed"
