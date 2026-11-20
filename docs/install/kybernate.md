@@ -21,12 +21,14 @@ The cluster is set up with one of the [installation guides](README.md). In parti
 
 | Resource | Purpose |
 | --- | --- |
-| CRD `gpunodes.kybernate.io` | One cluster-wide `GPUNode` per GPU node with the inventory in its status and the reservations in its spec |
-| DaemonSet `kybernate-node-agent` | Reads the GPUs of its node through NVML and publishes them as `GPUNode` |
-| ServiceAccount and ClusterRole for the node agent | Read nodes and pods, write `gpunodes` and `gpunodes/status` |
+| CRD `gpunodes.kybernate.io` | One cluster-wide `GPUNode` per GPU node with the inventory in its status and the reservations in its spec. The chart upgrades it with every release and keeps it on uninstall. |
+| DaemonSet `kybernate-node-agent` | Reads the GPUs of its node through NVML and the GPU allocations through the kubelet, and publishes both as `GPUNode` |
+| ServiceAccount and ClusterRole for the node agent | Read nodes, watch pods, write `gpunodes` and `gpunodes/status` |
 | ClusterRoles `kybernate-viewer` and `kybernate-editor` | Read or change `GPUNode` resources. They are added to the built-in roles `view` and `edit`. |
 
 The node agent does not request `nvidia.com/gpu`. It sees all GPUs of its node through the RuntimeClass `nvidia` and only has the driver capability `utility`, so it uses no GPU memory and does not block a GPU for other pods.
+
+To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`.
 
 ## 1. Install
 
@@ -70,12 +72,12 @@ kubectl -n kybernate-system rollout status daemonset/kybernate-node-agent
 kubectl get gpunodes
 ```
 
-Every GPU node appears with its number of GPUs and the driver version:
+Every GPU node appears with its number of GPUs, the GPUs in the Kybernate pool, the reservations still waiting and the driver version:
 
 ```text
-NAME     GPUS   RESERVED   DRIVER      AGE
-gpu-01   2                 615.71.09   1m
-gpu-02   2                 615.71.09   1m
+NAME     GPUS   RESERVED   PENDING   DRIVER      AGE
+gpu-01   2                           615.71.09   1m
+gpu-02   2                           615.71.09   1m
 ```
 
 The full inventory of a node, with model, architecture, memory, PCI address and the connections between its GPUs:
@@ -84,7 +86,18 @@ The full inventory of a node, with model, architecture, memory, PCI address and 
 kubectl get gpunode gpu-01 -o yaml
 ```
 
-The agent refreshes the inventory every minute. The condition `InventoryReady` shows whether the last refresh succeeded.
+For every GPU, the status shows its `state` and the containers it is allocated to:
+
+| State | Meaning |
+| --- | --- |
+| `Free` | Not reserved and not allocated to any pod |
+| `Regular` | Allocated to a regular pod through `nvidia.com/gpu` |
+| `Reserved` | In the Kybernate pool |
+| `PendingReservation` | Reserved, but still allocated to a regular pod. It joins the pool once the pod has ended. |
+
+A GPU counts as allocated as long as the kubelet has assigned it to a container, whether or not a process runs on it. `allocatedTo` lists these containers, `processCount` the processes NVML currently sees on the GPU.
+
+The agent reacts at once to changes of the reservations and of GPU pods on its node, and refreshes the whole inventory every minute, every 5 seconds while a reservation waits. The condition `InventoryReady` shows whether the last refresh succeeded.
 
 ## 3. Reserve GPUs
 
@@ -95,9 +108,14 @@ kubectl patch gpunode gpu-01 --type merge \
   -p '{"spec":{"reservedGPUs":["GPU-00000000-0000-0000-0000-000000000000"]}}'
 ```
 
-With the next refresh, the GPU changes to the state `Reserved`, or `PendingReservation` as long as a process still uses it.
+Every GPU can be reserved, also one a regular pod holds right now:
 
-In this release, a reservation is only recorded. It does not yet keep other pods away from the GPU. Enforcement follows in `v0.2.0`, see the [roadmap](../../ROADMAP.md).
+- A GPU that is not allocated joins the pool at once: `Reserved`.
+- A GPU allocated to a regular pod waits: `PendingReservation`. The pod keeps it. Once the pod has ended and released the GPU, it joins the pool.
+
+To return a GPU, remove its UUID from `spec.reservedGPUs`.
+
+A reservation does not yet keep new pods away from the GPU: the NVIDIA device plugin still offers it as `nvidia.com/gpu`. Enforcement follows in a later release, see the [roadmap](../../ROADMAP.md).
 
 ## Update
 
@@ -114,11 +132,19 @@ kubectl -n kube-system delete job helm-install-kybernate
 kubectl -n kube-system wait --for=condition=complete job/helm-install-kybernate --timeout=180s
 ```
 
-Helm installs CRDs only on the first installation and never changes them afterwards. If the release notes mention changes to the CRD, apply it from the release:
+The chart upgrades the CRD together with everything else.
+
+### Upgrading from 0.1.0
+
+Release 0.1.0 installed the CRD from the chart's `crds/` directory, which Helm never upgrades. Later releases manage it as a regular chart resource. Hand the existing CRD over to the Helm release once, before the upgrade:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kybernate/kybernate/v<version>/config/crd/bases/kybernate.io_gpunodes.yaml
+kubectl annotate crd gpunodes.kybernate.io \
+  meta.helm.sh/release-name=kybernate meta.helm.sh/release-namespace=kybernate-system --overwrite
+kubectl label crd gpunodes.kybernate.io app.kubernetes.io/managed-by=Helm --overwrite
 ```
+
+Without this step, the upgrade fails because the CRD exists but does not belong to the release.
 
 ## Uninstall
 
@@ -128,7 +154,7 @@ helm uninstall kybernate --namespace kybernate-system
 
 With K3s: `sudo k3s kubectl -n kube-system delete helmchart kybernate`.
 
-The CRD and the `GPUNode` resources stay, including the reservations. To remove them as well:
+The CRD and the `GPUNode` resources stay, including the reservations, because the CRD carries the annotation `helm.sh/resource-policy: keep`. Install with `crds.keep=false` to remove it with the chart. To remove it by hand:
 
 ```bash
 kubectl delete crd gpunodes.kybernate.io

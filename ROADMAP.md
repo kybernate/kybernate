@@ -5,7 +5,7 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | Phase | Goal | Repository | Status |
 | --- | --- | --- | --- |
 | 1 | Foundation: Ubuntu LTS and K3s | `kybernate` | guides written, acceptance on hardware pending |
-| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory released in `v0.1.0`, reservation enforcement next |
+| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory released in `v0.1.0`, allocations and pending reservations next, then enforcement |
 | 3 | Minimal dashboard: inventory and reservation | `kybernate-dashboard` | planned |
 | 4 | Node agent: GPU leases and the warm tier | `kybernate` | planned |
 | 5 | Runtime shim and the cold tier | `kybernate` | planned |
@@ -41,7 +41,7 @@ A service on every GPU node, with an API, that knows each GPU and decides whethe
   - driver version
   - interconnect to other GPUs: NVLink, NVSwitch, PCIe P2P, PCIe via CPU
 - **Reservation:** GPUs are reserved for Kybernate or released for regular pods, declaratively through a custom resource. A plain YAML manifest is enough to configure a node.
-- **Enforcement:** Reserved GPUs are no longer offered to the regular scheduler. A GPU still used by a regular pod is reserved as soon as that pod has finished, and the custom resource's status shows the pending state.
+- **Enforcement:** Every GPU can be reserved. A GPU allocated to a regular pod through `nvidia.com/gpu` stays with that pod and joins the Kybernate pool only after the pod has ended. Until then the status shows `PendingReservation`. From the moment of the reservation on, the GPU is no longer offered as `nvidia.com/gpu`, so it cannot go to the next regular pod when it is released.
 - **Access control:** ClusterRoles for reading the inventory and for changing reservations.
 - This service becomes the node agent in phase 4.
 
