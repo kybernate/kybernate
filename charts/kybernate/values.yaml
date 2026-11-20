@@ -52,6 +52,10 @@ nodeAgent:
     deviceListStrategy: cdi
     # CDI kind of the GPUs, used with deviceListStrategy cdi.
     cdiKind: nvidia.com/gpu
+    # Directory with the CDI specification of the NVIDIA Container Toolkit.
+    # The agent reports in the condition CDIReady whether it describes every
+    # GPU.
+    cdiSpecPath: /var/run/cdi
     # The kubelet's device plugin directory.
     path: /var/lib/kubelet/device-plugins
 

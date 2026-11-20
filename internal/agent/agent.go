@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
@@ -58,6 +60,12 @@ type Agent struct {
 	// Devices, if set, receives the GPUs and reservations, for example the
 	// device plugin that enforces the reservations.
 	Devices DeviceSink
+	// PluginState, if set, reports the state of the device plugin as the
+	// condition DevicePluginReady.
+	PluginState func() deviceplugin.State
+	// CDI, if set, checks that the CDI specifications describe every GPU and
+	// reports the result as the condition CDIReady.
+	CDI *CDISpecs
 	// Now returns the current time. It defaults to time.Now.
 	Now func() time.Time
 
@@ -65,6 +73,22 @@ type Agent struct {
 	pending     atomic.Bool
 	lastUnknown string
 	lastMIG     string
+	triggerOnce sync.Once
+	triggers    chan struct{}
+}
+
+func (a *Agent) triggerChan() chan struct{} {
+	a.triggerOnce.Do(func() { a.triggers = make(chan struct{}, 1) })
+	return a.triggers
+}
+
+// Trigger asks for a refresh as soon as possible, for example after the
+// state of the device plugin has changed.
+func (a *Agent) Trigger() {
+	select {
+	case a.triggerChan() <- struct{}{}:
+	default:
+	}
 }
 
 // Ready reports whether the inventory has been published at least once.
@@ -74,13 +98,8 @@ func (a *Agent) Ready() bool { return a.ready.Load() }
 // GPUNode changes, a GPU pod on the node changes, or the interval elapses.
 // While a reservation waits for its GPU, the shorter PendingInterval applies.
 func (a *Agent) Run(ctx context.Context) error {
-	triggers := make(chan struct{}, 1)
-	trigger := func() {
-		select {
-		case triggers <- struct{}{}:
-		default:
-		}
-	}
+	triggers := a.triggerChan()
+	trigger := a.Trigger
 
 	go a.watchLoop(ctx, "GPUNode", func(ctx context.Context) (watch.Interface, error) {
 		return a.Client.Watch(ctx, &v1alpha1.GPUNodeList{}, client.MatchingFields{"metadata.name": a.NodeName})
@@ -123,6 +142,12 @@ func (a *Agent) Sync(ctx context.Context) error {
 		}
 	}
 
+	var cdiMissing []string
+	var cdiErr error
+	if a.CDI != nil && collectErr == nil {
+		cdiMissing, cdiErr = a.CDI.Missing(inv.GPUs)
+	}
+
 	gpuNode, err := a.ensureGPUNode(ctx)
 	if err != nil {
 		return err
@@ -142,6 +167,7 @@ func (a *Agent) Sync(ctx context.Context) error {
 		default:
 			gpuNode.Status = BuildStatus(inv, allocs, gpuNode.Spec, gpuNode.Status, metav1.NewTime(a.now()))
 		}
+		a.setConditions(&gpuNode.Status, collectErr == nil, cdiMissing, cdiErr)
 		return a.Client.Status().Update(ctx, gpuNode)
 	})
 	if err != nil {
@@ -164,6 +190,37 @@ func (a *Agent) Sync(ctx context.Context) error {
 		a.Log.Info("GPU inventory published", "gpus", len(inv.GPUs), "driver", inv.DriverVersion)
 	}
 	return nil
+}
+
+// setConditions adds DevicePluginReady and CDIReady, if the agent checks them.
+func (a *Agent) setConditions(status *v1alpha1.GPUNodeStatus, collected bool, cdiMissing []string, cdiErr error) {
+	if a.PluginState == nil {
+		meta.RemoveStatusCondition(&status.Conditions, ConditionDevicePluginReady)
+	} else {
+		st := a.PluginState()
+		cond := metav1.Condition{Type: ConditionDevicePluginReady, Status: metav1.ConditionFalse, Reason: st.Reason, Message: st.Message}
+		if st.Registered {
+			cond.Status = metav1.ConditionTrue
+		}
+		meta.SetStatusCondition(&status.Conditions, cond)
+	}
+	if a.CDI == nil {
+		meta.RemoveStatusCondition(&status.Conditions, ConditionCDIReady)
+		return
+	}
+	if !collected {
+		return
+	}
+	cond := metav1.Condition{Type: ConditionCDIReady, Status: metav1.ConditionTrue, Reason: ReasonCDIComplete,
+		Message: "The CDI specification describes every GPU."}
+	switch {
+	case cdiErr != nil:
+		cond.Status, cond.Reason, cond.Message = metav1.ConditionFalse, ReasonCDIUnreadable, cdiErr.Error()
+	case len(cdiMissing) > 0:
+		cond.Status, cond.Reason = metav1.ConditionFalse, ReasonCDIIncomplete
+		cond.Message = fmt.Sprintf("The CDI specification lacks GPU(s) %s. Check nvidia-ctk cdi list and the systemd unit nvidia-cdi-refresh.", strings.Join(cdiMissing, ", "))
+	}
+	meta.SetStatusCondition(&status.Conditions, cond)
 }
 
 // SpecChanged returns a filter for GPUNode watch events that passes when the

@@ -32,7 +32,7 @@ The cluster is set up with one of the [installation guides](README.md). In parti
 
 The node agent does not request `nvidia.com/gpu`. It sees all GPUs of its node through the RuntimeClass `nvidia` and only has the driver capability `utility`, so it uses no GPU memory and does not block a GPU for other pods.
 
-To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`. For its device plugin, the agent also mounts the kubelet's device plugin directory `/var/lib/kubelet/device-plugins` to register there.
+To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`. For its device plugin, the agent also mounts the kubelet's device plugin directory `/var/lib/kubelet/device-plugins` to register there, and `/var/run/cdi` read-only to check the CDI specification.
 
 ## 1. Install
 
@@ -132,7 +132,21 @@ For every GPU, the status shows its `state` and the containers it is allocated t
 
 A GPU counts as allocated as long as the kubelet has assigned it to a container, whether or not a process runs on it. `allocatedTo` lists these containers, `processCount` the processes NVML currently sees on the GPU.
 
-The agent reacts at once to changes of the reservations and of GPU pods on its node, and refreshes the whole inventory every minute, every 5 seconds while a reservation waits. The condition `InventoryReady` shows whether the last refresh succeeded.
+The agent reacts at once to changes of the reservations and of GPU pods on its node, and refreshes the whole inventory every minute, every 5 seconds while a reservation waits.
+
+The conditions of the `GPUNode` show whether the node works as expected:
+
+| Condition | `True` | `False`, with the reason |
+| --- | --- | --- |
+| `InventoryReady` | The last refresh succeeded. | `CollectFailed`: NVML failed. `AllocationsFailed`: the kubelet's PodResources API failed. The status keeps the last known inventory. |
+| `DevicePluginReady` | The device plugin is registered with the kubelet. | `ConflictingPlugin`: another device plugin, usually NVIDIA's, serves `nvidia.com/gpu` on the node. `Starting`, `Reregistering` or `RegistrationFailed` while the plugin (re)registers. |
+| `CDIReady` | The CDI specification describes every GPU. | `Incomplete`: GPUs are missing, check `nvidia-ctk cdi list`. `Unreadable`: no or no valid specification in `/var/run/cdi`. |
+
+`DevicePluginReady` and `CDIReady` exist only with the device plugin enabled, `CDIReady` only with `deviceListStrategy: cdi`.
+
+```bash
+kubectl get gpunode gpu-01 -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
+```
 
 ## 3. Reserve GPUs
 

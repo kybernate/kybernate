@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,5 +426,42 @@ func TestSyncMarksInventoryStaleOnError(t *testing.T) {
 	}
 	if failing.Ready() {
 		t.Fatal("agent reports ready although it never published an inventory")
+	}
+}
+
+func TestSyncReportsDevicePluginAndCDI(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1", UID: "node-uid"}}
+	c := newClient(t, node)
+	a := newAgent(c, fakeSource{node: twoGPUs()}, &fakeAllocations{})
+	state := deviceplugin.State{Reason: deviceplugin.ReasonConflictingPlugin, Message: "another device plugin serves nvidia.com/gpu"}
+	a.PluginState = func() deviceplugin.State { return state }
+	dir := t.TempDir()
+	writeSpec(t, dir, "nvidia.yaml", nvidiaSpec) // describes GPU-a only
+	a.CDI = &CDISpecs{Dirs: []string{dir}, Kind: "nvidia.com/gpu"}
+
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := getGPUNode(t, c).Status
+	plugin := meta.FindStatusCondition(status.Conditions, ConditionDevicePluginReady)
+	if plugin == nil || plugin.Status != metav1.ConditionFalse || plugin.Reason != deviceplugin.ReasonConflictingPlugin {
+		t.Fatalf("DevicePluginReady = %+v", plugin)
+	}
+	cdi := meta.FindStatusCondition(status.Conditions, ConditionCDIReady)
+	if cdi == nil || cdi.Status != metav1.ConditionFalse || cdi.Reason != ReasonCDIIncomplete || !strings.Contains(cdi.Message, "GPU-b") {
+		t.Fatalf("CDIReady = %+v", cdi)
+	}
+
+	state = deviceplugin.State{Registered: true, Reason: deviceplugin.ReasonRegistered}
+	writeSpec(t, dir, "nvidia.yaml", strings.Replace(nvidiaSpec, "- name: all", "- name: GPU-b\n- name: all", 1))
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status = getGPUNode(t, c).Status
+	if !meta.IsStatusConditionTrue(status.Conditions, ConditionDevicePluginReady) || !meta.IsStatusConditionTrue(status.Conditions, ConditionCDIReady) {
+		t.Fatalf("conditions = %+v", status.Conditions)
+	}
+	if !meta.IsStatusConditionTrue(status.Conditions, ConditionInventoryReady) {
+		t.Fatal("InventoryReady was lost")
 	}
 }

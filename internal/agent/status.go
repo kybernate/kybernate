@@ -18,6 +18,20 @@ import (
 // ConditionInventoryReady reports whether the last inventory succeeded.
 const ConditionInventoryReady = "InventoryReady"
 
+// ConditionDevicePluginReady reports whether the device plugin is registered
+// with the kubelet. The reasons are those of deviceplugin.State.
+const ConditionDevicePluginReady = "DevicePluginReady"
+
+// ConditionCDIReady reports whether the CDI specifications describe every GPU.
+const ConditionCDIReady = "CDIReady"
+
+// Reasons of the condition CDIReady.
+const (
+	ReasonCDIComplete   = "Complete"
+	ReasonCDIIncomplete = "Incomplete"
+	ReasonCDIUnreadable = "Unreadable"
+)
+
 // Reasons of the condition InventoryReady.
 const (
 	ReasonCollected         = "Collected"

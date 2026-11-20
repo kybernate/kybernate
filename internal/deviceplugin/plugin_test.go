@@ -227,6 +227,46 @@ func TestPluginWaitsForTheNVIDIADevicePlugin(t *testing.T) {
 		t.Fatal("registered while the NVIDIA device plugin runs")
 	case <-time.After(300 * time.Millisecond):
 	}
+	if st := p.State(); st.Registered || st.Reason != ReasonConflictingPlugin {
+		t.Fatalf("state while waiting: %+v", st)
+	}
 	_ = nvidia.Close()
 	waitRegistration(t, kubelet)
+	waitState(t, p, ReasonRegistered)
+}
+
+func waitState(t *testing.T, p *Plugin, reason string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for p.State().Reason != reason {
+		if time.Now().After(deadline) {
+			t.Fatalf("state %+v, want reason %s", p.State(), reason)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestStateChangesAreReported(t *testing.T) {
+	dir := shortTempDir(t)
+	kubelet := startKubelet(t, dir)
+	p := newPlugin(dir)
+	changes := make(chan struct{}, 10)
+	p.OnStateChange = func() { changes <- struct{}{} }
+	if st := p.State(); st.Registered || st.Reason != ReasonStarting {
+		t.Fatalf("initial state: %+v", st)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+	p.Update([]Device{{ID: "GPU-a"}})
+	waitRegistration(t, kubelet)
+	waitState(t, p, ReasonRegistered)
+	if !p.State().Registered {
+		t.Fatal("not registered")
+	}
+	select {
+	case <-changes:
+	case <-time.After(time.Second):
+		t.Fatal("OnStateChange was not called")
+	}
 }

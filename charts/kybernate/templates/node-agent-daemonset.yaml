@@ -47,6 +47,7 @@ spec:
             - --device-plugin-resource={{ .resourceName }}
             - --device-list-strategy={{ .deviceListStrategy }}
             - --cdi-kind={{ .cdiKind }}
+            - --cdi-spec-dirs={{ .cdiSpecPath }}
             {{- end }}
             {{- end }}
           env:
@@ -80,6 +81,12 @@ spec:
             {{- if .Values.nodeAgent.devicePlugin.enabled }}
             - name: device-plugins
               mountPath: {{ .Values.nodeAgent.devicePlugin.path }}
+            {{- if eq .Values.nodeAgent.devicePlugin.deviceListStrategy "cdi" }}
+            # Read only, to check that the CDI specification describes every GPU.
+            - name: cdi-specs
+              mountPath: {{ .Values.nodeAgent.devicePlugin.cdiSpecPath }}
+              readOnly: true
+            {{- end }}
             {{- end }}
           # The kubelet's PodResources socket belongs to root with mode 0755,
           # so only root can connect to it. The agent runs as UID 0 but
@@ -101,5 +108,11 @@ spec:
           hostPath:
             path: {{ .Values.nodeAgent.devicePlugin.path }}
             type: Directory
+        {{- if eq .Values.nodeAgent.devicePlugin.deviceListStrategy "cdi" }}
+        - name: cdi-specs
+          hostPath:
+            path: {{ .Values.nodeAgent.devicePlugin.cdiSpecPath }}
+            type: DirectoryOrCreate
+        {{- end }}
         {{- end }}
 {{- end }}

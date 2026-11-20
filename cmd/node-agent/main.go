@@ -42,6 +42,7 @@ type options struct {
 	deviceResource     string
 	deviceStrategy     string
 	cdiKind            string
+	cdiSpecDirs        string
 }
 
 func main() {
@@ -56,6 +57,7 @@ func main() {
 	flag.StringVar(&o.deviceResource, "device-plugin-resource", deviceplugin.DefaultResourceName, "resource name the device plugin offers the GPUs as")
 	flag.StringVar(&o.deviceStrategy, "device-list-strategy", string(deviceplugin.StrategyEnvVar), "how GPUs are handed to containers: envvar (NVIDIA_VISIBLE_DEVICES, needs the NVIDIA runtime) or cdi")
 	flag.StringVar(&o.cdiKind, "cdi-kind", deviceplugin.DefaultCDIKind, "CDI device kind of the GPUs, used with --device-list-strategy=cdi")
+	flag.StringVar(&o.cdiSpecDirs, "cdi-spec-dirs", strings.Join(agent.DefaultCDISpecDirs, ","), "comma-separated directories with CDI specifications, checked with --device-list-strategy=cdi")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -120,7 +122,12 @@ func run(log *slog.Logger, o options) error {
 		plugin.ResourceName = o.deviceResource
 		plugin.Strategy = strategy
 		plugin.CDIKind = o.cdiKind
+		plugin.OnStateChange = a.Trigger
 		a.Devices = plugin
+		a.PluginState = plugin.State
+		if strategy == deviceplugin.StrategyCDI {
+			a.CDI = &agent.CDISpecs{Dirs: strings.Split(o.cdiSpecDirs, ","), Kind: o.cdiKind}
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
