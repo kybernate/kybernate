@@ -141,6 +141,10 @@ cat /etc/kybernate/host-inventory.yaml
 - [ ] The test pod prints `nvidia-smi` output.
 - [ ] The host inventory contains the K3s entries.
 
+## Next step
+
+The cluster is ready for Kybernate: [Installing Kybernate](../../kybernate.md).
+
 ## Paths used by Kybernate
 
 | What | Path |

@@ -25,6 +25,7 @@ Phases refer to the [roadmap](../../ROADMAP.md).
 
    For Ubuntu this is [ubuntu/host-basis.md](ubuntu/host-basis.md).
 2. **Kubernetes distribution:** Installation as a single node or as a multi-node cluster, plus everything this distribution needs on the host in addition. Example: kubeadm needs containerd and runc on the host, K3s ships both.
+3. **Kybernate:** One guide for all combinations: [kybernate.md](kybernate.md). It installs the Helm chart from the OCI registry and checks the GPU inventory.
 
 ## Principles
 
