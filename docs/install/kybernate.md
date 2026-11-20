@@ -184,7 +184,7 @@ The alternative `envvar` sets `NVIDIA_VISIBLE_DEVICES` like the NVIDIA device pl
 
 ### Why the admission policy
 
-The NVIDIA runtime hands a container every GPU named in `NVIDIA_VISIBLE_DEVICES`, without asking the kubelet. Any pod with the RuntimeClass `nvidia` could therefore reach a reserved GPU without requesting one. The admission policy `<release>-gpu-access` rejects pods that use the RuntimeClass `nvidia` or set `NVIDIA_VISIBLE_DEVICES`. The release namespace and the namespaces in `nodeAgent.devicePlugin.admissionPolicy.exemptNamespaces`, by default `kube-system`, are exempt.
+The NVIDIA runtime hands a container every GPU named in `NVIDIA_VISIBLE_DEVICES`, without asking the kubelet. Any pod with the RuntimeClass `nvidia` could therefore reach a reserved GPU without requesting one. The admission policy `<release>-gpu-access` rejects pods that use a RuntimeClass of the NVIDIA runtime or set `NVIDIA_VISIBLE_DEVICES`. By default these are `nvidia` and `nvidia-experimental`, the RuntimeClasses K3s creates. If your cluster has more, list them in `nodeAgent.devicePlugin.admissionPolicy.runtimeClasses`; `kubectl get runtimeclass` shows them with their handler. The release namespace and the namespaces in `nodeAgent.devicePlugin.admissionPolicy.exemptNamespaces`, by default `kube-system`, are exempt.
 
 Privileged pods and pods that mount `/dev/nvidia*` from the host can reach every GPU in any case. Keep them out of namespaces that run regular workloads, for example with the Pod Security Standard `baseline`.
 
