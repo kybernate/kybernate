@@ -33,7 +33,7 @@ Before 1.0.0 the API is `v1alpha1` and may change in minor releases.
 
 The workflow `CI` runs on every push to `main`:
 
-1. **Go** and **Helm chart** check the code and the chart.
+1. **Go** and **Helm chart** check the code and the chart. **Chart on k3d** installs the previous release on a k3d cluster, upgrades it to the new chart and checks CRD, status fields and admission policy, see `hack/e2e/chart.sh`.
 2. **Release:**
    - computes the next version
    - creates the annotated tag `vX.Y.Z` on the merge commit
@@ -62,6 +62,6 @@ These settings make the process work:
 | --- | --- | --- |
 | Allow squash merging | on, as the only merge method | one commit per pull request on `main` |
 | Default commit message for squash merging | Pull request title (and description) | GitHub otherwise uses the commit message for pull requests with a single commit, and that message may not follow Conventional Commits |
-| Branch protection for `main` | pull requests only, required checks `Go`, `Helm chart`, `Image node-agent`, `Conventional Commit title`, linear history, no force pushes | `main` stays releasable |
+| Branch protection for `main` | pull requests only, required checks `Go`, `Helm chart`, `Chart on k3d`, `Image node-agent`, `Conventional Commit title`, linear history, no force pushes | `main` stays releasable |
 | Actions: workflow permissions | read and write, or at least allowed for `contents: write` and `packages: write` in workflows | the release job pushes tags, and the image job pushes packages |
 | Packages `node-agent` and `charts/kybernate` | public | clusters can pull the image and install the chart without credentials |

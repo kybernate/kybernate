@@ -38,6 +38,19 @@ jobs:
       - name: Lint and render
         run: make helm-lint
 
+  e2e:
+    name: Chart on k3d
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - name: Install k3d
+        run: curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - name: Create a cluster
+        run: k3d cluster create e2e --wait --k3s-arg "--disable=traefik@server:0"
+      - name: Upgrade from the previous release and check the chart
+        run: hack/e2e/chart.sh
+
   # After a merge to main: derive the next version from the Conventional
   # Commit messages, tag it and create a GitHub release. For a tag pushed by
   # hand: create the GitHub release for it. Tags created here do not trigger
@@ -45,7 +58,7 @@ jobs:
   release:
     name: Release
     if: github.event_name == 'push'
-    needs: [go, helm]
+    needs: [go, helm, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,8 +96,8 @@ jobs:
 
   image:
     name: Image node-agent
-    needs: [go, helm, release]
-    if: ${{ !cancelled() && needs.go.result == 'success' && needs.helm.result == 'success' && needs.release.result != 'failure' }}
+    needs: [go, helm, e2e, release]
+    if: ${{ !cancelled() && needs.go.result == 'success' && needs.helm.result == 'success' && needs.e2e.result == 'success' && needs.release.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

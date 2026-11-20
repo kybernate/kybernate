@@ -121,7 +121,7 @@ sudo systemctl stop k3s
 kubectl get nodes
 ```
 
-The API stays reachable, and the stopped node becomes `NotReady`. Start it again with `sudo systemctl start k3s`.
+The API stays reachable. After about a minute, the stopped node becomes `NotReady`. Pods on it keep running, because stopping K3s does not stop the containers. Start it again with `sudo systemctl start k3s`; the node is `Ready` again within a minute.
 
 ## 7. etcd snapshots
 

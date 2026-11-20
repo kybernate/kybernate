@@ -95,6 +95,15 @@ Kybernate follows [Semantic Versioning](https://semver.org/). All components and
 | `v0.1.0` | GPU inventory as `GPUNode` resources |
 | `v0.2.0` | GPUs blocked by kubelet allocation, reservations that wait for the release, immediate reaction to changes, CRD upgraded with the chart. Enforcement: the Kybernate device plugin replaces the NVIDIA device plugin and offers `nvidia.com/gpu` without the reserved GPUs, NVLink-aware allocation, admission policy against bypassing it. |
 
+## Acceptance and end-to-end tests
+
+Every phase ends with acceptance tests on the GPU test cluster, see [Acceptance](acceptance/README.md). The scripts live in `hack/acceptance`. The Helm chart is additionally tested on k3d in CI with `hack/e2e/chart.sh`. To run it locally against any cluster without GPUs:
+
+```bash
+k3d cluster create e2e --wait
+hack/e2e/chart.sh
+```
+
 ## Testing on a GPU cluster without the registry
 
 For a development build, build the image on an amd64 GPU node and import it into the containerd of K3s on every node:
