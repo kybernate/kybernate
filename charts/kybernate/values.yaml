@@ -21,6 +21,15 @@ nodeAgent:
 
   tolerations: []
 
+  # Directory of the kubelet's PodResources socket. The agent reads from it
+  # which containers the kubelet has allocated GPUs to: a GPU held by a regular
+  # pod counts as blocked, even if no process currently runs on it.
+  kubeletPodResourcesPath: /var/lib/kubelet/pod-resources
+
+  # Device plugin resources that allocate whole GPUs.
+  gpuResources:
+    - nvidia.com/gpu
+
   healthPort: 8081
 
   resources:
@@ -31,6 +40,14 @@ nodeAgent:
       memory: 128Mi
 
 imagePullSecrets: []
+
+crds:
+  # Install and upgrade the CRDs with the chart. Helm never upgrades CRDs from
+  # a chart's crds/ directory, so they are rendered as templates instead.
+  install: true
+  # Keep the CRDs, and with them all GPUNode resources and reservations, when
+  # the chart is uninstalled.
+  keep: true
 
 rbac:
   # Add the kybernate-viewer and kybernate-editor roles to the built-in

@@ -12,7 +12,7 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 | `internal/agent/` | Keeps the `GPUNode` resource of the local node up to date |
 | `internal/version/` | Build information |
 | `config/crd/bases/` | CRDs generated from the API types |
-| `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `crds/`. |
+| `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `files/crds/` and installed and upgraded through the template `crds.yaml`. |
 | `docs/` | Installation guides and this document |
 | `.github/workflows/` | CI: lint, tests, image and chart builds |
 
