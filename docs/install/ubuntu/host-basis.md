@@ -109,6 +109,15 @@ nvidia-ctk --version
 
 The runtime is not configured here. Each Kubernetes distribution does this in its own guide. K3s, for example, detects the NVIDIA runtime by itself.
 
+The toolkit also describes the GPUs as CDI devices in `/var/run/cdi/nvidia.yaml`. Kybernate hands GPUs to containers through these devices. The systemd unit `nvidia-cdi-refresh` generates the file at every boot and whenever the driver or the toolkit changes. Check that it lists every GPU:
+
+```bash
+systemctl is-enabled nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+nvidia-ctk cdi list
+```
+
+The list contains `nvidia.com/gpu=<index>` and `nvidia.com/gpu=<uuid>` for every GPU, and `nvidia.com/gpu=all`. If it is empty, generate the file once with `sudo systemctl start nvidia-cdi-refresh.service`.
+
 ## 4. CRIU
 
 CRIU comes from the PPA maintained by the CRIU team. The Ubuntu archive keeps the version that shipped with the LTS release. The PPA follows upstream releases, which regularly bring improvements for checkpointing GPU workloads.
@@ -167,6 +176,7 @@ The guide of the Kubernetes distribution adds its own entries, such as the distr
 - [ ] `nvidia-smi` lists all GPUs, and persistence mode is `Enabled`.
 - [ ] `nouveau` is not loaded. With Secure Boot enabled, the NVIDIA modules are loaded anyway.
 - [ ] `nvidia-ctk --version` works.
+- [ ] `nvidia-ctk cdi list` shows every GPU.
 - [ ] `sudo criu check` prints `Looks good.`.
 - [ ] `cuda-checkpoint --help` works.
 - [ ] `/etc/kybernate/host-inventory.yaml` exists.

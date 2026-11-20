@@ -15,7 +15,7 @@ nodeAgent:
   # nvidia.com/gpu, so it sees every GPU without allocating any.
   runtimeClassName: nvidia
 
-  # Nodes the agent runs on. The label is also used by the NVIDIA device plugin.
+  # Nodes the agent runs on.
   nodeSelector:
     nvidia.com/gpu.present: "true"
 
@@ -32,11 +32,14 @@ nodeAgent:
 
   healthPort: 8081
 
-  # The node agent can offer the GPUs to the kubelet itself and keep reserved
-  # GPUs away from regular pods. It then replaces the NVIDIA device plugin,
-  # which must not run on the same nodes: both register the same resource.
+  # The node agent offers the GPUs to the kubelet itself and keeps reserved
+  # GPUs away from regular pods. It replaces the NVIDIA device plugin, which
+  # must not run on the same nodes: both register the same resource. While the
+  # NVIDIA device plugin runs on a node, the agent does not register there and
+  # logs a warning. Disable this only to keep the NVIDIA device plugin; then
+  # reservations are recorded but not enforced.
   devicePlugin:
-    enabled: false
+    enabled: true
     # Resource name regular pods request.
     resourceName: nvidia.com/gpu
     # How GPUs are handed to containers:
@@ -58,7 +61,7 @@ nodeAgent:
     # RuntimeClasses or set NVIDIA_VISIBLE_DEVICES. Needs the cdi strategy,
     # because with envvar regular GPU pods need the RuntimeClass.
     admissionPolicy:
-      enabled: false
+      enabled: true
       # RuntimeClasses whose handler is the NVIDIA runtime. K3s creates
       # nvidia and nvidia-experimental when it finds the NVIDIA Container
       # Toolkit. Check with: kubectl get runtimeclass

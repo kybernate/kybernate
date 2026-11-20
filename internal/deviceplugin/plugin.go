@@ -51,6 +51,11 @@ const (
 	DefaultCDIKind      = "nvidia.com/gpu"
 )
 
+// DefaultConflicts match the sockets of the NVIDIA device plugin for
+// nvidia.com/gpu: nvidia-gpu-<session>.sock in current releases,
+// nvidia-gpu.sock in older ones.
+var DefaultConflicts = []string{"nvidia-gpu.sock", "nvidia-gpu-*.sock"}
+
 // Device is one GPU as offered to the kubelet.
 type Device struct {
 	// ID is the GPU UUID.
@@ -81,7 +86,12 @@ type Plugin struct {
 	// exists. The kubelet removes all plugin sockets when it restarts, and the
 	// plugin then registers again. It defaults to 5 seconds.
 	CheckInterval time.Duration
-	Log           *slog.Logger
+	// Conflicts are file name patterns in Dir of sockets of other device
+	// plugins for the same resource. While one of them accepts connections,
+	// the plugin does not register, so that the two plugins do not take the
+	// resource from each other. It defaults to DefaultConflicts.
+	Conflicts []string
+	Log       *slog.Logger
 
 	mu      sync.Mutex
 	devices []Device
@@ -100,6 +110,7 @@ func New(log *slog.Logger) *Plugin {
 		Endpoint:     DefaultEndpoint,
 		Strategy:     StrategyEnvVar,
 		CDIKind:      DefaultCDIKind,
+		Conflicts:    DefaultConflicts,
 		Log:          log,
 	}
 }
@@ -247,12 +258,64 @@ func (p *Plugin) Run(ctx context.Context) error {
 	case <-p.ready:
 	}
 	for ctx.Err() == nil {
+		p.waitForConflicts(ctx)
+		if ctx.Err() != nil {
+			break
+		}
 		if err := p.serve(ctx); err != nil {
 			p.Log.Error("device plugin failed, restarting", "error", err)
 			sleep(ctx, 5*time.Second)
 		}
 	}
 	return nil
+}
+
+// waitForConflicts returns once no other device plugin for the resource
+// accepts connections in Dir, for example after the NVIDIA device plugin has
+// been removed from the node.
+func (p *Plugin) waitForConflicts(ctx context.Context) {
+	logged := false
+	for ctx.Err() == nil {
+		socket := p.liveConflict()
+		if socket == "" {
+			if logged {
+				p.Log.Info("the other device plugin is gone, registering", "resource", p.ResourceName)
+			}
+			return
+		}
+		if !logged {
+			p.Log.Warn("another device plugin serves this resource on the node; remove it, until then the Kybernate device plugin does not register",
+				"resource", p.ResourceName, "socket", socket)
+			logged = true
+		}
+		sleep(ctx, p.checkInterval())
+	}
+}
+
+// liveConflict returns the first socket matching Conflicts that accepts
+// connections. Stale sockets left behind by a crashed plugin do not count.
+func (p *Plugin) liveConflict() string {
+	for _, pattern := range p.Conflicts {
+		matches, _ := filepath.Glob(filepath.Join(p.Dir, pattern))
+		for _, socket := range matches {
+			if filepath.Base(socket) == p.Endpoint {
+				continue
+			}
+			conn, err := net.DialTimeout("unix", socket, time.Second)
+			if err == nil {
+				_ = conn.Close()
+				return socket
+			}
+		}
+	}
+	return ""
+}
+
+func (p *Plugin) checkInterval() time.Duration {
+	if p.CheckInterval > 0 {
+		return p.CheckInterval
+	}
+	return 5 * time.Second
 }
 
 func (p *Plugin) serve(ctx context.Context) error {
@@ -274,11 +337,7 @@ func (p *Plugin) serve(ctx context.Context) error {
 	}
 	p.Log.Info("device plugin registered with the kubelet", "resource", p.ResourceName, "socket", socket, "strategy", p.Strategy)
 
-	interval := p.CheckInterval
-	if interval == 0 {
-		interval = 5 * time.Second
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(p.checkInterval())
 	defer ticker.Stop()
 	for {
 		select {

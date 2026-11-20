@@ -198,3 +198,35 @@ func TestRunWaitsForDevices(t *testing.T) {
 	p.Update(nil)
 	waitRegistration(t, kubelet)
 }
+
+func TestPluginWaitsForTheNVIDIADevicePlugin(t *testing.T) {
+	dir := shortTempDir(t)
+	kubelet := startKubelet(t, dir)
+
+	// A stale socket of a crashed NVIDIA plugin does not block.
+	stale, err := net.Listen("unix", filepath.Join(dir, "nvidia-gpu.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	_ = stale.Close()
+	// A running one does.
+	nvidia, err := net.Listen("unix", filepath.Join(dir, "nvidia-gpu-0123456789abcdef.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := newPlugin(dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = p.Run(ctx) }()
+	p.Update([]Device{{ID: "GPU-a"}})
+
+	select {
+	case <-kubelet.got:
+		t.Fatal("registered while the NVIDIA device plugin runs")
+	case <-time.After(300 * time.Millisecond):
+	}
+	_ = nvidia.Close()
+	waitRegistration(t, kubelet)
+}

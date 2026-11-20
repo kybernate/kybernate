@@ -68,21 +68,13 @@ Every node is `Ready` and has the roles `control-plane` and `etcd`. No node carr
 
 ## 4. GPUs
 
-On **every GPU node**, check the NVIDIA runtime as in [step 2 of the single-node guide](single-node.md#2-check-the-nvidia-runtime). Then label the node:
+On **every GPU node**, check the NVIDIA runtime and the CDI devices as in [step 2 of the single-node guide](single-node.md#2-check-the-nvidia-runtime-and-cdi). Then label the node:
 
 ```bash
 kubectl label node <node-name> nvidia.com/gpu.present=true --overwrite
 ```
 
-Install the NVIDIA device plugin **once** for the whole cluster, as in [step 3 of the single-node guide](single-node.md#3-nvidia-device-plugin). Its DaemonSet runs on every labelled node.
-
-Check that every GPU node reports its GPUs:
-
-```bash
-kubectl get nodes -o custom-columns='NODE:.metadata.name,GPUS:.status.allocatable.nvidia\.com/gpu'
-```
-
-Run the [test pod](single-node.md#4-test-a-gpu-pod) once per GPU node by adding `nodeName: <node-name>` to its `spec`.
+Do not install the NVIDIA device plugin. Kybernate brings its own and offers the GPUs of every labelled node, see [Installing Kybernate](../../kybernate.md), which also tests a GPU pod per node.
 
 ## 5. Check pod networking across nodes
 
@@ -144,13 +136,14 @@ Copy the snapshots to storage outside the cluster. K3s can also upload them to S
 
 ## 8. Host inventory
 
-On every node, extend the host inventory as in [step 5 of the single-node guide](single-node.md#5-extend-the-host-inventory).
+On every node, extend the host inventory as in [step 4 of the single-node guide](single-node.md#4-extend-the-host-inventory).
 
 ## 9. Checklist
 
 - [ ] All nodes are `Ready` with the roles `control-plane` and `etcd`, without taints.
 - [ ] `kubectl get nodes -l node-role.kubernetes.io/etcd=true` lists all nodes.
-- [ ] Every GPU node reports `nvidia.com/gpu`, and the test pod succeeds on every GPU node.
+- [ ] On every GPU node, `nvidia-ctk cdi list` shows every GPU, and the node carries the label `nvidia.com/gpu.present=true`.
+- [ ] No NVIDIA device plugin is installed.
 - [ ] HTTP between pods on different nodes works.
 - [ ] With one server stopped, the API stays reachable.
 - [ ] `sudo k3s etcd-snapshot ls` lists snapshots.
