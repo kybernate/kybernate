@@ -5,7 +5,7 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | Phase | Goal | Repository | Status |
 | --- | --- | --- | --- |
 | 1 | Foundation: Ubuntu LTS and K3s | `kybernate` | guides written, acceptance on hardware pending |
-| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory works on a 3-node K3s cluster, reservation enforcement next |
+| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory released in `v0.1.0`, reservation enforcement next |
 | 3 | Minimal dashboard: inventory and reservation | `kybernate-dashboard` | planned |
 | 4 | Node agent: GPU leases and the warm tier | `kybernate` | planned |
 | 5 | Runtime shim and the cold tier | `kybernate` | planned |
