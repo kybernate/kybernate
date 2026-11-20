@@ -22,12 +22,12 @@ generate: ## Generate the DeepCopy methods of the API types.
 .PHONY: manifests
 manifests: ## Generate the CRDs and copy them into the Helm chart.
 	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:artifacts:config=config/crd/bases
-	mkdir -p charts/kybernate/crds
-	cp config/crd/bases/*.yaml charts/kybernate/crds/
+	mkdir -p charts/kybernate/files/crds
+	cp config/crd/bases/*.yaml charts/kybernate/files/crds/
 
 .PHONY: verify
 verify: generate manifests ## Fail if generated files are out of date.
-	git diff --exit-code -- api config charts/kybernate/crds
+	git diff --exit-code -- api config charts/kybernate/files/crds
 
 .PHONY: fmt
 fmt:

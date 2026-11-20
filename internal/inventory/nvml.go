@@ -107,6 +107,11 @@ func readGPU(index int, device nvml.Device) (GPU, error) {
 	if processes, ret := device.GetComputeRunningProcesses(); ret == nvml.SUCCESS {
 		gpu.ComputeProcesses = len(processes)
 	}
+	// GPUs without MIG support return NOT_SUPPORTED. The pending mode only
+	// takes effect after a GPU reset, so the current mode counts.
+	if current, _, ret := device.GetMigMode(); ret == nvml.SUCCESS {
+		gpu.MIGEnabled = current == nvml.DEVICE_MIG_ENABLE
+	}
 	return gpu, nil
 }
 

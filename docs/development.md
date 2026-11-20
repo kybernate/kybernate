@@ -12,7 +12,7 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 | `internal/agent/` | Keeps the `GPUNode` resource of the local node up to date |
 | `internal/version/` | Build information |
 | `config/crd/bases/` | CRDs generated from the API types |
-| `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `crds/`. |
+| `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `files/crds/` and installed and upgraded through the template `crds.yaml`. |
 | `docs/` | Installation guides and this document |
 | `.github/workflows/` | CI: lint, tests, image and chart builds |
 
@@ -93,8 +93,7 @@ Kybernate follows [Semantic Versioning](https://semver.org/). All components and
 | Version | Contents |
 | --- | --- |
 | `v0.1.0` | GPU inventory as `GPUNode` resources |
-| `v0.1.x` | Installation guide with `helm install` from the OCI chart |
-| `v0.2.0` | GPU reservation with enforcement |
+| `v0.2.0` | GPUs blocked by kubelet allocation, reservations that wait for the release, immediate reaction to changes, CRD upgraded with the chart. Enforcement: the Kybernate device plugin replaces the NVIDIA device plugin and offers `nvidia.com/gpu` without the reserved GPUs, NVLink-aware allocation, admission policy against bypassing it. |
 
 ## Testing on a GPU cluster without the registry
 

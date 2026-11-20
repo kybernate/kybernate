@@ -23,6 +23,9 @@ spec:
     - jsonPath: .status.reservedCount
       name: Reserved
       type: integer
+    - jsonPath: .status.pendingCount
+      name: Pending
+      type: integer
     - jsonPath: .status.driverVersion
       name: Driver
       type: string
@@ -145,6 +148,31 @@ spec:
                 items:
                   description: GPU is the inventory record of one GPU.
                   properties:
+                    allocatedTo:
+                      description: |-
+                        AllocatedTo lists the containers the kubelet has allocated the GPU to
+                        through a device plugin resource. A GPU with entries here is blocked by
+                        regular pods, whether or not they currently run processes on it.
+                      items:
+                        description: PodReference names the container a GPU is allocated
+                          to.
+                        properties:
+                          container:
+                            description: Container is the container inside the pod
+                              that holds the GPU.
+                            type: string
+                          name:
+                            description: Name of the pod.
+                            type: string
+                          namespace:
+                            description: Namespace of the pod.
+                            type: string
+                        required:
+                        - name
+                        - namespace
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
                     architecture:
                       description: Architecture is the GPU generation, for example
                         Ampere, Ada, Hopper or Blackwell.
@@ -201,6 +229,12 @@ spec:
                         of the last inventory.
                       format: int64
                       type: integer
+                    migEnabled:
+                      description: |-
+                        MIGEnabled reports whether the GPU is partitioned with MIG. Kybernate
+                        does not manage MIG devices yet: its device plugin does not offer such a
+                        GPU, and reserving it has no effect.
+                      type: boolean
                     name:
                       description: Name is the product name, for example "NVIDIA RTX
                         A6000".
@@ -213,6 +247,13 @@ spec:
                         PCIDeviceID identifies the GPU chip. A checkpoint can only be restored
                         onto a GPU with the same device ID.
                       type: string
+                    processCount:
+                      description: |-
+                        ProcessCount is the number of compute processes NVML saw on the GPU at
+                        the time of the last inventory. It is informational only: whether a GPU
+                        is blocked depends on AllocatedTo.
+                      format: int32
+                      type: integer
                     state:
                       description: State tells who the GPU currently belongs to.
                       enum:
@@ -237,6 +278,12 @@ spec:
                 description: LastInventoryTime is when the inventory was last refreshed.
                 format: date-time
                 type: string
+              pendingCount:
+                description: |-
+                  PendingCount is the number of reserved GPUs that still wait for a
+                  regular pod to release them.
+                format: int32
+                type: integer
               reservedCount:
                 description: ReservedCount is the number of GPUs in the Kybernate
                   pool.

@@ -30,7 +30,7 @@ kubectl get nodes -o wide
 
 To use `kubectl` from another machine, copy `~/.kube/config` there and replace `127.0.0.1` with the node's IP address.
 
-## 2. Check the NVIDIA runtime
+## 2. Check the NVIDIA runtime and CDI
 
 K3s detects the NVIDIA Container Toolkit when it starts and adds the runtime `nvidia` to its containerd configuration:
 
@@ -53,72 +53,25 @@ EOF
 
 If the runtime is missing from the containerd configuration, the toolkit was probably installed after K3s. Restart K3s with `sudo systemctl restart k3s`.
 
-## 3. NVIDIA device plugin
+The RuntimeClass `nvidia` is only used by Kybernate's node agent, which reads all GPUs of the node. Regular GPU pods do not need it: they get their GPUs as CDI devices. The containerd 2 shipped by K3s supports CDI out of the box. Check the CDI devices as in the [host prerequisites](../host-basis.md#3-nvidia-container-toolkit):
 
-The device plugin makes the GPUs schedulable as `nvidia.com/gpu`. Kybernate later reserves part of them for its own pool. The plugin is installed from NVIDIA's Helm repository in its latest version, through the Helm controller built into K3s.
+```bash
+nvidia-ctk cdi list
+```
 
-The chart only schedules onto nodes labelled as GPU nodes. Label the node:
+Do not make the NVIDIA runtime containerd's default runtime, for example with the K3s option `--default-runtime nvidia`. Every container would then run through it, and images that set `NVIDIA_VISIBLE_DEVICES=all`, as the CUDA images do, would see every GPU of the node.
+
+## 3. Label the GPU node
+
+Kybernate's node agent runs on every node labelled as GPU node:
 
 ```bash
 kubectl label node "$(hostname)" nvidia.com/gpu.present=true --overwrite
 ```
 
-Install the chart:
+Do not install the NVIDIA device plugin. Kybernate brings its own device plugin, which offers the GPUs as `nvidia.com/gpu` and keeps reserved GPUs away from regular pods. Until Kybernate is installed, the node offers no `nvidia.com/gpu`, and GPU pods stay pending.
 
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: nvidia-device-plugin
-  namespace: kube-system
-spec:
-  repo: https://nvidia.github.io/k8s-device-plugin
-  chart: nvidia-device-plugin
-  targetNamespace: nvidia-device-plugin
-  createNamespace: true
-  valuesContent: |-
-    runtimeClassName: nvidia
-EOF
-```
-
-Wait until the GPUs appear on the node:
-
-```bash
-kubectl -n nvidia-device-plugin get pods
-kubectl get node "$(hostname)" -o jsonpath='{.status.allocatable.nvidia\.com/gpu}{"\n"}'
-```
-
-## 4. Test a GPU pod
-
-```bash
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: Pod
-metadata:
-  name: gpu-test
-spec:
-  restartPolicy: Never
-  runtimeClassName: nvidia
-  containers:
-    - name: gpu-test
-      image: ubuntu
-      command: ["nvidia-smi"]
-      env:
-        - name: NVIDIA_DRIVER_CAPABILITIES
-          value: compute,utility
-      resources:
-        limits:
-          nvidia.com/gpu: 1
-EOF
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/gpu-test --timeout=180s
-kubectl logs gpu-test
-kubectl delete pod gpu-test
-```
-
-The log shows one GPU, the one assigned to the pod.
-
-## 5. Extend the host inventory
+## 4. Extend the host inventory
 
 Add the K3s components to the inventory from the host prerequisites:
 
@@ -132,18 +85,19 @@ EOF
 cat /etc/kybernate/host-inventory.yaml
 ```
 
-## 6. Checklist
+## 5. Checklist
 
 - [ ] `kubectl get nodes` shows the node as `Ready`, with the roles `control-plane` and `etcd`.
 - [ ] `sudo k3s etcd-snapshot ls` works, so the datastore is etcd.
 - [ ] The containerd configuration of K3s contains the runtime `nvidia`, and the RuntimeClass `nvidia` exists.
-- [ ] The node reports `nvidia.com/gpu` in its allocatable resources.
-- [ ] The test pod prints `nvidia-smi` output.
+- [ ] `nvidia-ctk cdi list` shows every GPU.
+- [ ] The node carries the label `nvidia.com/gpu.present=true`.
+- [ ] No NVIDIA device plugin is installed.
 - [ ] The host inventory contains the K3s entries.
 
 ## Next step
 
-The cluster is ready for Kybernate: [Installing Kybernate](../../kybernate.md).
+The cluster is ready for Kybernate: [Installing Kybernate](../../kybernate.md). It also tests a first GPU pod.
 
 ## Paths used by Kybernate
 

@@ -5,13 +5,13 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | Phase | Goal | Repository | Status |
 | --- | --- | --- | --- |
 | 1 | Foundation: Ubuntu LTS and K3s | `kybernate` | guides written, acceptance on hardware pending |
-| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory released in `v0.1.0`, reservation enforcement next |
-| 3 | Minimal dashboard: inventory and reservation | `kybernate-dashboard` | planned |
+| 2 | GPU inventory and reservation | `kybernate` | in progress: inventory released in `v0.1.0`, allocations and enforcement in `v0.2.0` |
+| 3 | Minimal dashboard: inventory and reservation | `dashboard` | in progress |
 | 4 | Node agent: GPU leases and the warm tier | `kybernate` | planned |
 | 5 | Runtime shim and the cold tier | `kybernate` | planned |
 | 6 | Model switching on a node | `kybernate` | planned |
 | 7 | Cluster scheduling | `kybernate` | planned |
-| 8 | Full dashboard and access control | `kybernate-dashboard`, `kybernate` | planned |
+| 8 | Full dashboard and access control | `dashboard`, `kybernate` | planned |
 | 9 | Checkpoint registry and migration | `kybernate` | planned |
 | 10 | RKE2 | `kybernate` | planned |
 | 11 | Kubernetes vanilla (kubeadm) | `kybernate` | planned |
@@ -40,18 +40,23 @@ A service on every GPU node, with an API, that knows each GPU and decides whethe
   - total and used VRAM
   - driver version
   - interconnect to other GPUs: NVLink, NVSwitch, PCIe P2P, PCIe via CPU
+  - whether MIG is enabled
 - **Reservation:** GPUs are reserved for Kybernate or released for regular pods, declaratively through a custom resource. A plain YAML manifest is enough to configure a node.
-- **Enforcement:** Reserved GPUs are no longer offered to the regular scheduler. A GPU still used by a regular pod is reserved as soon as that pod has finished, and the custom resource's status shows the pending state.
+- **Enforcement:** Every GPU can be reserved. A GPU allocated to a regular pod through `nvidia.com/gpu` stays with that pod and joins the Kybernate pool only after the pod has ended. Until then the status shows `PendingReservation`. From the moment of the reservation on, the GPU is no longer offered as `nvidia.com/gpu`, so it cannot go to the next regular pod when it is released.
+- **Kybernate device plugin:** It offers whole GPUs as `nvidia.com/gpu` and replaces the NVIDIA device plugin.
+  - Pods with several GPUs get GPUs connected through NVLink, if available.
+  - GPUs with MIG enabled are not offered.
 - **Access control:** ClusterRoles for reading the inventory and for changing reservations.
 - This service becomes the node agent in phase 4.
 
 ## Phase 3 – Minimal dashboard: inventory and reservation
 
-In the new, separate repository `kybernate-dashboard`, installed optionally through its own Helm chart.
+In the new, separate repository [`kybernate/dashboard`](https://github.com/kybernate/dashboard), installed optionally through its own Helm chart.
 
 - Shows every node with its GPUs and their inventory data.
 - Reserves GPUs for Kybernate or releases them, by editing the same custom resources as a YAML manifest would.
 - Acts with the identity of the signed-in user. Kubernetes RBAC decides what they may change.
+- **Sign-in with a Kubernetes bearer token**, like the Kubernetes Dashboard: the user enters a token, for example of a ServiceAccount or from `kubectl create token`. The dashboard server forwards every request with this token to the API server and keeps no credentials of its own.
 
 ## Phase 4 – Node agent: GPU leases and the warm tier
 
@@ -97,6 +102,9 @@ Without its own GPU allocation, model switching is impossible. A pod that reques
 - Models with their temperature (hot, warm, cold), replica placement and queue lengths.
 - Actions: hibernate, resume, add and remove replicas.
 - Ready-made ClusterRoles for viewing, editing and administration. Cluster-admin rights are only needed for installation.
+- **Further sign-in methods**, in addition to the bearer token:
+  - **OIDC:** sign-in through the cluster's identity provider, for example Keycloak or Dex. The API server must trust the same provider. The dashboard then forwards the user's ID token.
+  - **Authenticating proxy:** an upstream proxy such as oauth2-proxy signs the user in, and the dashboard acts for them through Kubernetes impersonation.
 - Read-only display of resources managed by GitOps tools.
 
 ## Phase 9 – Checkpoint registry and migration
@@ -158,6 +166,10 @@ RHEL and compatible distributions such as Rocky Linux and AlmaLinux, in their cu
 - **Runtime profile:** It includes the operating system and kernel. A checkpoint does not move between an Ubuntu node and a RHEL node.
 
 ## Under evaluation
+
+- **Dashboard as a Headlamp plugin:** [Headlamp](https://headlamp.dev), a Kubernetes web UI under the Kubernetes SIG UI, already handles sign-in and RBAC. The GPU views could be offered as a Headlamp plugin in addition to the standalone dashboard.
+
+- **MIG:** A MIG partition could become the unit of a Kybernate pool, so that small models are switched on a share of a large GPU with hardware isolation. A prerequisite is a test on MIG hardware showing that `cuda-checkpoint` checkpoints a process on a MIG partition and restores it on another partition with the same profile. Then the reservation, the inventory and the device plugin would handle MIG devices. Time-slicing and MPS are not planned: they share a GPU without isolating its memory, which works against exclusive GPU leases.
 
 - **CRI-O and OpenShift:** The warm tier works without changes to the runtime. The cold tier needs a different integration path than the containerd shim.
 - **CRIU's own CUDA plugin:** It gained GPU device mapping on restore in CRIU 4.3. It could replace parts of the orchestration that Kybernate does itself today.

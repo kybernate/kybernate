@@ -18,14 +18,16 @@ type GPUNodeSpec struct {
 type GPUState string
 
 const (
-	// GPUStateFree means the GPU is available to regular pods and currently unused.
+	// GPUStateFree means the GPU is not reserved and not allocated to any pod.
 	GPUStateFree GPUState = "Free"
-	// GPUStateRegular means the GPU is used by a regular pod.
+	// GPUStateRegular means the kubelet has allocated the GPU to a regular pod
+	// through a device plugin resource such as nvidia.com/gpu.
 	GPUStateRegular GPUState = "Regular"
 	// GPUStateReserved means the GPU belongs to the Kybernate pool.
 	GPUStateReserved GPUState = "Reserved"
-	// GPUStatePendingReservation means the GPU is reserved in the spec but a
-	// regular pod still uses it.
+	// GPUStatePendingReservation means the GPU is reserved in the spec but is
+	// still allocated to a regular pod. It joins the Kybernate pool once that
+	// pod has ended and released it.
 	GPUStatePendingReservation GPUState = "PendingReservation"
 )
 
@@ -58,6 +60,17 @@ type GPULink struct {
 	P2P bool `json:"p2p,omitempty"`
 }
 
+// PodReference names the container a GPU is allocated to.
+type PodReference struct {
+	// Namespace of the pod.
+	Namespace string `json:"namespace"`
+	// Name of the pod.
+	Name string `json:"name"`
+	// Container is the container inside the pod that holds the GPU.
+	// +optional
+	Container string `json:"container,omitempty"`
+}
+
 // GPU is the inventory record of one GPU.
 type GPU struct {
 	// Index is the NVML index of the GPU on its node.
@@ -85,11 +98,27 @@ type GPU struct {
 	// MemoryUsedBytes is the VRAM in use at the time of the last inventory.
 	// +optional
 	MemoryUsedBytes int64 `json:"memoryUsedBytes,omitempty"`
+	// MIGEnabled reports whether the GPU is partitioned with MIG. Kybernate
+	// does not manage MIG devices yet: its device plugin does not offer such a
+	// GPU, and reserving it has no effect.
+	// +optional
+	MIGEnabled bool `json:"migEnabled,omitempty"`
 	// Links describes the connections to the other GPUs of the node.
 	// +optional
 	// +listType=map
 	// +listMapKey=peerUUID
 	Links []GPULink `json:"links,omitempty"`
+	// ProcessCount is the number of compute processes NVML saw on the GPU at
+	// the time of the last inventory. It is informational only: whether a GPU
+	// is blocked depends on AllocatedTo.
+	// +optional
+	ProcessCount int32 `json:"processCount,omitempty"`
+	// AllocatedTo lists the containers the kubelet has allocated the GPU to
+	// through a device plugin resource. A GPU with entries here is blocked by
+	// regular pods, whether or not they currently run processes on it.
+	// +optional
+	// +listType=atomic
+	AllocatedTo []PodReference `json:"allocatedTo,omitempty"`
 	// State tells who the GPU currently belongs to.
 	// +optional
 	State GPUState `json:"state,omitempty"`
@@ -109,6 +138,10 @@ type GPUNodeStatus struct {
 	// ReservedCount is the number of GPUs in the Kybernate pool.
 	// +optional
 	ReservedCount int32 `json:"reservedCount,omitempty"`
+	// PendingCount is the number of reserved GPUs that still wait for a
+	// regular pod to release them.
+	// +optional
+	PendingCount int32 `json:"pendingCount,omitempty"`
 	// GPUs is the inventory of the node.
 	// +optional
 	// +listType=map
@@ -132,6 +165,7 @@ type GPUNodeStatus struct {
 // +kubebuilder:resource:scope=Cluster,shortName=gpun
 // +kubebuilder:printcolumn:name="GPUs",type=integer,JSONPath=`.status.gpuCount`
 // +kubebuilder:printcolumn:name="Reserved",type=integer,JSONPath=`.status.reservedCount`
+// +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.pendingCount`
 // +kubebuilder:printcolumn:name="Driver",type=string,JSONPath=`.status.driverVersion`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type GPUNode struct {

@@ -15,13 +15,60 @@ nodeAgent:
   # nvidia.com/gpu, so it sees every GPU without allocating any.
   runtimeClassName: nvidia
 
-  # Nodes the agent runs on. The label is also used by the NVIDIA device plugin.
+  # Nodes the agent runs on.
   nodeSelector:
     nvidia.com/gpu.present: "true"
 
   tolerations: []
 
+  # Directory of the kubelet's PodResources socket. The agent reads from it
+  # which containers the kubelet has allocated GPUs to: a GPU held by a regular
+  # pod counts as blocked, even if no process currently runs on it.
+  kubeletPodResourcesPath: /var/lib/kubelet/pod-resources
+
+  # Device plugin resources that allocate whole GPUs.
+  gpuResources:
+    - nvidia.com/gpu
+
   healthPort: 8081
+
+  # The node agent offers the GPUs to the kubelet itself and keeps reserved
+  # GPUs away from regular pods. It replaces the NVIDIA device plugin, which
+  # must not run on the same nodes: both register the same resource. While the
+  # NVIDIA device plugin runs on a node, the agent does not register there and
+  # logs a warning. Disable this only to keep the NVIDIA device plugin; then
+  # reservations are recorded but not enforced.
+  devicePlugin:
+    enabled: true
+    # Resource name regular pods request.
+    resourceName: nvidia.com/gpu
+    # How GPUs are handed to containers:
+    #   cdi:    CDI devices from the NVIDIA Container Toolkit. Pods need no
+    #           RuntimeClass, and NVIDIA_VISIBLE_DEVICES in the pod or image
+    #           grants no further GPUs. Needs containerd 2 and a toolkit that
+    #           generates /var/run/cdi/nvidia.yaml.
+    #   envvar: NVIDIA_VISIBLE_DEVICES, pods need the RuntimeClass nvidia. A
+    #           pod can override the variable and see every GPU of the node.
+    deviceListStrategy: cdi
+    # CDI kind of the GPUs, used with deviceListStrategy cdi.
+    cdiKind: nvidia.com/gpu
+    # The kubelet's device plugin directory.
+    path: /var/lib/kubelet/device-plugins
+
+    # A pod with the RuntimeClass nvidia can still reach any GPU, reserved or
+    # not, by setting NVIDIA_VISIBLE_DEVICES itself. This admission policy
+    # rejects pods outside the exempt namespaces that use one of these
+    # RuntimeClasses or set NVIDIA_VISIBLE_DEVICES. Needs the cdi strategy,
+    # because with envvar regular GPU pods need the RuntimeClass.
+    admissionPolicy:
+      enabled: true
+      # RuntimeClasses whose handler is the NVIDIA runtime. K3s creates
+      # nvidia and nvidia-experimental when it finds the NVIDIA Container
+      # Toolkit. Check with: kubectl get runtimeclass
+      runtimeClasses: [nvidia, nvidia-experimental]
+      # The release namespace is always exempt, the node agent needs the
+      # RuntimeClass to read all GPUs.
+      exemptNamespaces: [kube-system]
 
   resources:
     requests:
@@ -31,6 +78,14 @@ nodeAgent:
       memory: 128Mi
 
 imagePullSecrets: []
+
+crds:
+  # Install and upgrade the CRDs with the chart. Helm never upgrades CRDs from
+  # a chart's crds/ directory, so they are rendered as templates instead.
+  install: true
+  # Keep the CRDs, and with them all GPUNode resources and reservations, when
+  # the chart is uninstalled.
+  keep: true
 
 rbac:
   # Add the kybernate-viewer and kybernate-editor roles to the built-in
