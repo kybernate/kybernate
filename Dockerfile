@@ -7,6 +7,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+ENV CGO_CFLAGS="-O2 -g -Wno-deprecated-declarations"
 ARG VERSION=dev
 ARG COMMIT=unknown
 RUN go build -trimpath \
