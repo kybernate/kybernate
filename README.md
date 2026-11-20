@@ -4,7 +4,9 @@
 
 <p align="center">
   <strong>Hibernate GPU workloads on Kubernetes. Resume models in seconds instead of cold-starting them.</strong><br>
-  <a href="https://kybernate.io">kybernate.io</a> (coming soon)
+  <a href="https://kybernate.io">kybernate.io</a> ·
+  <a href="LICENSE">Apache 2.0</a> ·
+  by <a href="https://cloudcourse.de">CloudCourse GmbH</a>
 </p>
 
 # Kybernate
@@ -152,6 +154,7 @@ Because a frozen model generation can be resumed more than once, Kybernate can a
 
 ## Documentation
 
+- [Website: kybernate.io](https://kybernate.io): what Kybernate does, with an interactive dashboard demo
 - [Installation overview](docs/install/README.md): supported combinations of Linux and Kubernetes distributions
 - Ubuntu LTS:
   - [Host prerequisites](docs/install/ubuntu/host-basis.md): NVIDIA driver, NVIDIA Container Toolkit, CRIU, `cuda-checkpoint`
@@ -173,3 +176,19 @@ For contributors: [Development](docs/development.md) covers the repository layou
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md).
+
+## Authors
+
+<a href="https://cloudcourse.de">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/cloudcourse-logo-dark.svg">
+    <img src="docs/assets/cloudcourse-logo.svg" alt="CloudCourse GmbH" height="64">
+  </picture>
+</a>
+
+Kybernate is developed by **Andre Lohmann** ([lohmann.andre@gmail.com](mailto:lohmann.andre@gmail.com)) and **[CloudCourse GmbH](https://cloudcourse.de)**.
+
+## License
+
+Kybernate is open source under the [Apache License 2.0](LICENSE).
+Copyright 2026 Andre Lohmann and CloudCourse GmbH, see [NOTICE](NOTICE).
