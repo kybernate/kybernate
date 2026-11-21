@@ -165,6 +165,7 @@ func run(log *slog.Logger, o options) error {
 			Tool:         checkpoint.Tool{Path: o.cudaCheckpoint},
 			Procs:        checkpoint.Procfs{Root: o.procRoot},
 			Log:          log,
+			OnChange:     a.Trigger,
 		}
 		slots = deviceplugin.New(log)
 		slots.Dir = o.devicePluginDir

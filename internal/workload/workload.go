@@ -78,6 +78,9 @@ type Manager struct {
 	Log     *slog.Logger
 	// Now returns the current time. It defaults to time.Now.
 	Now func() time.Time
+	// OnChange, if set, is called after a workload was suspended or resumed,
+	// so that the node's inventory shows the new GPU memory. It must not block.
+	OnChange func()
 
 	mu         sync.Mutex
 	containers map[string]*container // by container ID
@@ -210,23 +213,20 @@ func parseCount(s string) int {
 	return n
 }
 
-// Snapshot of the leases by container, for the status of the GPUNode.
-func (m *Manager) leaseHolders() map[string]v1alpha1.PodReference {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// LeaseHolders returns, per leased GPU, the container that holds it. The
+// lease manager is the source, so a lease shows from the moment it is taken.
+func (m *Manager) LeaseHolders() map[string]v1alpha1.PodReference {
 	out := map[string]v1alpha1.PodReference{}
-	for _, c := range m.containers {
-		for _, g := range c.Leased {
-			out[g] = v1alpha1.PodReference{Namespace: c.Pod.Namespace, Name: c.Pod.Name, Container: c.Name}
-		}
+	for g, h := range m.Leases.Leases() {
+		out[g] = v1alpha1.PodReference{Namespace: h.Namespace, Name: h.Pod, Container: h.Container}
 	}
 	return out
 }
 
-// LeaseHolders returns, per leased GPU, the container that holds it.
-func (m *Manager) LeaseHolders() map[string]v1alpha1.PodReference {
-	m.init()
-	return m.leaseHolders()
+func (m *Manager) changed() {
+	if m.OnChange != nil {
+		m.OnChange()
+	}
 }
 
 // ensure the checkpoint package satisfies the interfaces.

@@ -202,6 +202,7 @@ func (m *Manager) suspend(ctx context.Context, key podKey, cs []*container, w *v
 	m.setPhase(key, v1alpha1.PhaseSuspended, "")
 	m.setDuration(w, "suspend", d)
 	m.Log.Info("workload suspended", "pod", key.Namespace+"/"+key.Name, "processes", len(pids), "seconds", seconds(d))
+	m.changed()
 }
 
 func (m *Manager) failSuspend(ctx context.Context, key podKey, cs []*container, err error) {
@@ -321,6 +322,7 @@ func (m *Manager) resume(ctx context.Context, key podKey, cs []*container, w *v1
 		gpus = append(gpus, targets[c.ID]...)
 	}
 	m.Log.Info("workload resumed", "pod", key.Namespace+"/"+key.Name, "gpus", gpus, "processes", len(restored), "seconds", seconds(d))
+	m.changed()
 }
 
 func seconds(d time.Duration) string { return strconv.FormatFloat(d.Seconds(), 'f', 2, 64) }
