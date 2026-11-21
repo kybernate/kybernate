@@ -7,7 +7,7 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | 1 | Foundation: Ubuntu LTS and K3s | `kybernate` | done, see [acceptance](docs/acceptance/phase-1.md) |
 | 2 | GPU inventory and reservation | `kybernate` | done in `v0.2.0`, see [acceptance](docs/acceptance/phase-2.md) |
 | 3 | Minimal dashboard: inventory and reservation | `dashboard` | first release `v0.1.0` |
-| 4 | Node agent: GPU leases and the warm tier | `kybernate` | spike |
+| 4 | Node agent: GPU leases and the warm tier | `kybernate` | done, see [acceptance](docs/acceptance/phase-4.md) |
 | 5 | Runtime shim and the cold tier | `kybernate` | planned |
 | 6 | Model switching on a node | `kybernate` | planned |
 | 7 | Cluster scheduling | `kybernate` | planned |
@@ -63,16 +63,17 @@ In the new, separate repository [`kybernate/dashboard`](https://github.com/kyber
 Without its own GPU allocation, model switching is impossible. A pod that requests `nvidia.com/gpu` keeps those GPUs allocated as long as it exists, even when its model sleeps and the VRAM is free. So the node agent takes over GPU allocation for Kybernate workloads first.
 
 - **The node agent grows out of the inventory service:**
-  - Pods with the RuntimeClass `kybernate` do not request `nvidia.com/gpu`.
-  - The agent hands out an exclusive lease over a full GPU set from the reserved pool, covering all tensor-parallel ranks at once.
-  - The devices are injected when the container is created, through CDI devices or an NRI plugin in containerd.
+  - Pods with the RuntimeClass `kybernate` request `kybernate.io/gpu` instead of `nvidia.com/gpu`. The scheduler sees the pool as slots of `kybernate.io/gpu`.
+  - The agent hands out an exclusive lease over a full GPU set from the reserved pool, covering all tensor-parallel ranks at once, NVLink-connected if possible.
+  - The devices are injected as CDI devices when the container is created, through an NRI plugin in containerd.
+  - Isolation per workload: `strict` shows a container only its GPUs, `migratable` every pool GPU so it can move.
 - **Warm tier without a shim:** The processes keep running while suspended, so no runtime changes are needed.
   - The agent finds the container's processes through the CRI API and drives `cuda-checkpoint` directly.
   - Suspend moves the VRAM into host RAM and releases the lease.
-  - Resume acquires a new lease, if necessary on a different GPU set with UUID remapping.
+  - Resume acquires a new lease, for `migratable` workloads if necessary on a different GPU set of the same chip, with UUID remapping.
 - **Recovery:** Leases and suspended instances survive restarts and failures of the agent.
 - **Dashboard:** It shows which lease each GPU carries and whether an instance is hot or warm.
-- **API:** Suspend and resume are exposed through custom resources and can be triggered by YAML.
+- **API:** Suspend and resume through `spec.state` of a `GPUWorkload`, one per Kybernate pod.
 
 ## Phase 5 – Runtime shim and the cold tier
 

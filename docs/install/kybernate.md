@@ -16,6 +16,7 @@ The cluster is set up with one of the [installation guides](README.md). In parti
 
 - The RuntimeClass `nvidia` exists: `kubectl get runtimeclass nvidia`. The node agent uses it to read all GPUs.
 - The node carries the label `nvidia.com/gpu.present=true`. The node agent runs only on these nodes.
+- `cuda-checkpoint` is installed at `/usr/local/bin/cuda-checkpoint`, as in the host prerequisites, and containerd has NRI enabled, which is the default of containerd 2.
 - The NVIDIA Container Toolkit has generated the CDI specification of the GPUs: `nvidia-ctk cdi list` shows `nvidia.com/gpu=<uuid>` for every GPU. The node agent hands GPUs to containers as CDI devices, which needs containerd 2 with CDI, as shipped by K3s.
 - **No NVIDIA device plugin runs.** Kybernate brings its own device plugin. If the NVIDIA device plugin is installed, see [Upgrading from 0.1.0](#upgrading-from-010).
 - **The NVIDIA runtime is not containerd's default runtime**, for example through the K3s option `--default-runtime nvidia`. Otherwise every container runs through the NVIDIA runtime, and an image that sets `NVIDIA_VISIBLE_DEVICES=all`, as the CUDA images do, sees every GPU of the node, reserved or not.
@@ -26,13 +27,17 @@ The cluster is set up with one of the [installation guides](README.md). In parti
 | --- | --- |
 | CRD `gpunodes.kybernate.io` | One cluster-wide `GPUNode` per GPU node with the inventory in its status and the reservations in its spec. The chart upgrades it with every release and keeps it on uninstall. |
 | DaemonSet `kybernate-node-agent` | Reads the GPUs of its node through NVML and the GPU allocations through the kubelet, publishes both as `GPUNode`, and offers the GPUs to the kubelet as `nvidia.com/gpu` without the reserved ones |
-| ServiceAccount and ClusterRole for the node agent | Read nodes, watch pods, write `gpunodes` and `gpunodes/status` |
-| ClusterRoles `kybernate-viewer` and `kybernate-editor` | Read or change `GPUNode` resources. They are added to the built-in roles `view` and `edit`. |
-| ValidatingAdmissionPolicy `<release>-gpu-access` | Rejects pods that bypass the device plugin, see [How reservations are enforced](#4-how-reservations-are-enforced) |
+| ServiceAccount and ClusterRole for the node agent | Read nodes, watch pods, write `gpunodes`, `gpuworkloads` and their status |
+| ClusterRoles `kybernate-viewer` and `kybernate-editor` | Read `GPUNode` and `GPUWorkload` resources, or also change reservations and suspend or resume workloads. They are added to the built-in roles `view` and `edit`. |
+| ValidatingAdmissionPolicy `<release>-gpu-access` | Rejects pods that bypass the device plugin, see [How reservations are enforced](#4-how-reservations-are-enforced), and checks the requests of Kybernate workloads |
+| CRD `gpuworkloads.kybernate.io` | One `GPUWorkload` per Kybernate pod, to suspend and resume it, see [Run workloads on the Kybernate pool](#5-run-workloads-on-the-kybernate-pool) |
+| RuntimeClass `kybernate` | Pods with it get GPUs of the Kybernate pool. Its handler is containerd's `runc`. |
 
 The node agent does not request `nvidia.com/gpu`. It sees all GPUs of its node through the RuntimeClass `nvidia` and only has the driver capability `utility`, so it uses no GPU memory and does not block a GPU for other pods.
 
 To learn which GPUs are allocated to pods, the agent reads the kubelet's PodResources API from `/var/lib/kubelet/pod-resources/kubelet.sock`. The socket belongs to root and only root can connect to it, so the agent runs as UID 0, but without any Linux capabilities, without privilege escalation and with a read-only root filesystem. The directory is mounted read-only. If the kubelet of your distribution uses another directory, set `nodeAgent.kubeletPodResourcesPath`. For its device plugin, the agent also mounts the kubelet's device plugin directory `/var/lib/kubelet/device-plugins` to register there, and `/var/run/cdi` read-only to check the CDI specification.
+
+For the [warm tier](#5-run-workloads-on-the-kybernate-pool), `cuda-checkpoint` must reach the processes of other containers. The agent therefore runs in the host's PID namespace, with the capability `SYS_PTRACE` and without AppArmor confinement, still not privileged and with seccomp `RuntimeDefault`. It mounts containerd's NRI socket and `cuda-checkpoint` from the host, and gets the driver capability `compute` for `libcuda`. Set `nodeAgent.leases.enabled=false` to run without leases and without these rights.
 
 ## 1. Install
 
@@ -226,6 +231,69 @@ nodeAgent:
 ```
 
 Reservations are then recorded in the `GPUNode` status but not enforced: the NVIDIA device plugin keeps handing reserved GPUs to new pods.
+
+## 5. Run workloads on the Kybernate pool
+
+Pods with the RuntimeClass `kybernate` get GPUs of the Kybernate pool: the reserved GPUs that no regular pod holds. They request them as `kybernate.io/gpu`, not as `nvidia.com/gpu`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: model
+spec:
+  runtimeClassName: kybernate
+  containers:
+    - name: server
+      image: <your inference image>
+      resources:
+        limits:
+          kybernate.io/gpu: 1
+```
+
+When the container is created, the node agent leases free pool GPUs to it and injects them as CDI devices, through containerd's NRI. The kubelet does not bind them to the pod, so a suspended workload frees its GPUs for others. For several GPUs, the agent prefers GPUs connected through NVLink. Containers of the pod without `kybernate.io/gpu`, such as sidecars, get no GPU.
+
+The scheduler sees the pool as `kybernate.io/gpu` on every GPU node, with `nodeAgent.leases.slotsPerGPU` slots per pool GPU, 4 by default. More slots than GPUs let more workloads than GPUs share a node, as long as not all of them run at the same time. A container whose GPUs are all taken is not created; the kubelet retries until a workload is suspended or ends.
+
+### Suspend and resume
+
+The node agent creates a `GPUWorkload` with the name of the pod for every such pod. It is deleted together with the pod.
+
+```bash
+kubectl get gpuworkloads -A
+kubectl -n <namespace> patch gpuworkload model --type merge -p '{"spec":{"state":"Suspended"}}'
+kubectl -n <namespace> patch gpuworkload model --type merge -p '{"spec":{"state":"Running"}}'
+```
+
+Suspending keeps the processes of the pod alive. `cuda-checkpoint` locks every CUDA process of the pod, moves its GPU memory into the process's host memory and releases the GPUs. Resuming leases GPUs again and copies the memory back. Requests that reach a suspended workload wait until it runs again.
+
+| Phase | Meaning |
+| --- | --- |
+| `Running` | The processes run on their leased GPUs. |
+| `Suspending` | The processes are being locked and checkpointed. |
+| `Suspended` | The GPU memory is in host memory, no GPU is leased. |
+| `Waiting` | The workload should run, but its GPUs are taken. It resumes as soon as they are free. |
+| `Resuming` | The processes are being restored onto their GPUs. |
+| `Failed` | A checkpoint or restore failed, `status.message` tells why. |
+
+`status.lastSuspendSeconds` and `status.lastResumeSeconds` show how long the last transitions took. A suspended workload needs as much host memory as it had GPU memory. Users with the role `kybernate-editor`, or the built-in `edit`, may suspend and resume workloads.
+
+### Isolation
+
+The pod annotation `kybernate.io/isolation` decides which GPUs a container sees:
+
+| Isolation | The container sees | Resumes |
+| --- | --- | --- |
+| `strict` (default) | only its leased GPUs | only on the same GPUs. While they are taken, the workload waits. |
+| `migratable` | every GPU of the node's pool, its leased GPUs first in `CUDA_VISIBLE_DEVICES` | on its own GPUs if they are free, otherwise on other free pool GPUs of the same model. |
+
+A process ignoring `CUDA_VISIBLE_DEVICES` could use every pool GPU in a `migratable` container. Use it only for workloads you trust. The pool GPUs a `migratable` container sees are those of the pool when it was created.
+
+### Limitations
+
+- A workload moves only between GPUs of the same node.
+- A container created while the node agent is not running gets no GPU. Its `GPUWorkload` shows `Failed`; delete the pod to get GPUs.
+- A workload must have initialized CUDA before it can be suspended.
 
 ## Update
 

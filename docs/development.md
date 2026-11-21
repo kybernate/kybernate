@@ -10,6 +10,10 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 | `cmd/node-agent/` | Entry point of the node agent, which runs as a DaemonSet on every GPU node |
 | `internal/inventory/` | GPU inventory through NVML: GPUs, VRAM, architecture and links between GPUs |
 | `internal/agent/` | Keeps the `GPUNode` resource of the local node up to date |
+| `internal/deviceplugin/` | Device plugins for `nvidia.com/gpu` and the scheduling slots of `kybernate.io/gpu` |
+| `internal/lease/` | The Kybernate pool and exclusive GPU leases per container, device maps for moving workloads |
+| `internal/checkpoint/` | Finds a container's processes and runs `cuda-checkpoint` |
+| `internal/workload/` | NRI plugin that injects leased GPUs, and the controller of `GPUWorkload`: suspend, resume, migration |
 | `internal/version/` | Build information |
 | `config/crd/bases/` | CRDs generated from the API types |
 | `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `files/crds/` and installed and upgraded through the template `crds.yaml`. |
