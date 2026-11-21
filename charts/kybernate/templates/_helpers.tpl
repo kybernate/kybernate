@@ -23,3 +23,8 @@ app.kubernetes.io/component: node-agent
 {{- define "kybernate.nodeAgent.image" -}}
 {{- printf "%s:%s" .Values.nodeAgent.image.repository (.Values.nodeAgent.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}
+
+{{/* Non-empty if GPU leases are enabled; they need the device plugin. */}}
+{{- define "kybernate.leases" -}}
+{{- if and .Values.nodeAgent.enabled .Values.nodeAgent.devicePlugin.enabled .Values.nodeAgent.leases.enabled -}}true{{- end -}}
+{{- end -}}

@@ -41,6 +41,10 @@ const (
 	// NVIDIA runtime. NVIDIA_VISIBLE_DEVICES is set to "void", so an image
 	// that sets it to "all" gets no further GPUs from the NVIDIA runtime.
 	StrategyCDI Strategy = "cdi"
+	// StrategyNone hands nothing to the container. It serves resources that
+	// only count for the scheduler, such as kybernate.io/gpu, whose GPUs are
+	// injected by the node agent's NRI plugin.
+	StrategyNone Strategy = "none"
 )
 
 // Defaults of the plugin.
@@ -92,14 +96,55 @@ type Plugin struct {
 	// resource from each other. It defaults to DefaultConflicts.
 	Conflicts []string
 	Log       *slog.Logger
+	// OnStateChange, if set, is called after the state of the plugin has
+	// changed, see State. It must not block.
+	OnStateChange func()
 
 	mu      sync.Mutex
 	devices []Device
+	state   State
 	changed chan struct{}
 	ready   chan struct{}
 	once    sync.Once
 
 	pluginapi.UnimplementedDevicePluginServer
+}
+
+// Reasons of State.
+const (
+	ReasonStarting           = "Starting"
+	ReasonConflictingPlugin  = "ConflictingPlugin"
+	ReasonRegistered         = "Registered"
+	ReasonRegistrationFailed = "RegistrationFailed"
+	ReasonReregistering      = "Reregistering"
+)
+
+// State tells whether the plugin is registered with the kubelet, and if not,
+// why.
+type State struct {
+	Registered bool
+	Reason     string
+	Message    string
+}
+
+// State returns the current state of the plugin.
+func (p *Plugin) State() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.state.Reason == "" {
+		return State{Reason: ReasonStarting, Message: "waiting for the first GPU inventory"}
+	}
+	return p.state
+}
+
+func (p *Plugin) setState(s State) {
+	p.mu.Lock()
+	changed := p.state != s
+	p.state = s
+	p.mu.Unlock()
+	if changed && p.OnStateChange != nil {
+		p.OnStateChange()
+	}
 }
 
 // New returns a plugin with the defaults.
@@ -237,6 +282,9 @@ func (p *Plugin) Allocate(_ context.Context, req *pluginapi.AllocateRequest) (*p
 }
 
 func (p *Plugin) containerResponse(ids []string) *pluginapi.ContainerAllocateResponse {
+	if p.Strategy == StrategyNone {
+		return &pluginapi.ContainerAllocateResponse{}
+	}
 	if p.Strategy == StrategyCDI {
 		out := &pluginapi.ContainerAllocateResponse{Envs: map[string]string{"NVIDIA_VISIBLE_DEVICES": "void"}}
 		for _, id := range ids {
@@ -263,6 +311,7 @@ func (p *Plugin) Run(ctx context.Context) error {
 			break
 		}
 		if err := p.serve(ctx); err != nil {
+			p.setState(State{Reason: ReasonRegistrationFailed, Message: err.Error()})
 			p.Log.Error("device plugin failed, restarting", "error", err)
 			sleep(ctx, 5*time.Second)
 		}
@@ -283,6 +332,8 @@ func (p *Plugin) waitForConflicts(ctx context.Context) {
 			}
 			return
 		}
+		p.setState(State{Reason: ReasonConflictingPlugin, Message: fmt.Sprintf(
+			"another device plugin serves %s on the node through %s; remove it, for example the NVIDIA device plugin", p.ResourceName, socket)})
 		if !logged {
 			p.Log.Warn("another device plugin serves this resource on the node; remove it, until then the Kybernate device plugin does not register",
 				"resource", p.ResourceName, "socket", socket)
@@ -335,6 +386,7 @@ func (p *Plugin) serve(ctx context.Context) error {
 	if err := p.register(ctx); err != nil {
 		return err
 	}
+	p.setState(State{Registered: true, Reason: ReasonRegistered, Message: fmt.Sprintf("registered with the kubelet as %s", p.ResourceName)})
 	p.Log.Info("device plugin registered with the kubelet", "resource", p.ResourceName, "socket", socket, "strategy", p.Strategy)
 
 	ticker := time.NewTicker(p.checkInterval())
@@ -345,6 +397,7 @@ func (p *Plugin) serve(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 			if _, err := os.Stat(socket); err != nil {
+				p.setState(State{Reason: ReasonReregistering, Message: "the kubelet removed the plugin socket, registering again"})
 				p.Log.Info("device plugin socket removed, registering again", "socket", socket)
 				return nil
 			}

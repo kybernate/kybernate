@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/kybernate/kybernate/internal/allocation"
 	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
+	"github.com/kybernate/kybernate/internal/lease"
 )
 
 type fakeSource struct {
@@ -53,7 +55,7 @@ func trainerOnGPUA() []allocation.Allocation {
 // Two GPUs connected through NVLink. GPU 0 runs a process, GPU 1 is idle.
 func twoGPUs() inventory.Node {
 	return inventory.Node{
-		DriverVersion:     "615.71.09",
+		DriverVersion:     "999.99.99",
 		CUDADriverVersion: "13.2",
 		GPUs: []inventory.GPU{
 			{
@@ -136,7 +138,7 @@ func TestBuildStatusFields(t *testing.T) {
 	if len(gpu.Links) != 1 || gpu.Links[0].Type != v1alpha1.LinkTypeNVLink || gpu.Links[0].NVLinks != 4 || !gpu.Links[0].P2P {
 		t.Fatalf("unexpected links: %+v", gpu.Links)
 	}
-	if status.DriverVersion != "615.71.09" || status.CUDADriverVersion != "13.2" {
+	if status.DriverVersion != "999.99.99" || status.CUDADriverVersion != "13.2" {
 		t.Fatalf("unexpected driver fields: %q %q", status.DriverVersion, status.CUDADriverVersion)
 	}
 	if !meta.IsStatusConditionTrue(status.Conditions, ConditionInventoryReady) {
@@ -369,7 +371,7 @@ func TestMIGEnabledGPUs(t *testing.T) {
 	inv.GPUs[1].MIGEnabled = true
 	spec := v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a", "GPU-b"}}
 
-	devices := PluginDevices(inv, spec)
+	devices := PluginDevices(inv, spec, nil)
 	if len(devices) != 1 || devices[0].ID != "GPU-a" {
 		t.Fatalf("a GPU with MIG enabled was offered as a whole: %+v", devices)
 	}
@@ -425,5 +427,85 @@ func TestSyncMarksInventoryStaleOnError(t *testing.T) {
 	}
 	if failing.Ready() {
 		t.Fatal("agent reports ready although it never published an inventory")
+	}
+}
+
+func TestSyncReportsDevicePluginAndCDI(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1", UID: "node-uid"}}
+	c := newClient(t, node)
+	a := newAgent(c, fakeSource{node: twoGPUs()}, &fakeAllocations{})
+	state := deviceplugin.State{Reason: deviceplugin.ReasonConflictingPlugin, Message: "another device plugin serves nvidia.com/gpu"}
+	a.PluginState = func() deviceplugin.State { return state }
+	dir := t.TempDir()
+	writeSpec(t, dir, "nvidia.yaml", nvidiaSpec) // describes GPU-a only
+	a.CDI = &CDISpecs{Dirs: []string{dir}, Kind: "nvidia.com/gpu"}
+
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := getGPUNode(t, c).Status
+	plugin := meta.FindStatusCondition(status.Conditions, ConditionDevicePluginReady)
+	if plugin == nil || plugin.Status != metav1.ConditionFalse || plugin.Reason != deviceplugin.ReasonConflictingPlugin {
+		t.Fatalf("DevicePluginReady = %+v", plugin)
+	}
+	cdi := meta.FindStatusCondition(status.Conditions, ConditionCDIReady)
+	if cdi == nil || cdi.Status != metav1.ConditionFalse || cdi.Reason != ReasonCDIIncomplete || !strings.Contains(cdi.Message, "GPU-b") {
+		t.Fatalf("CDIReady = %+v", cdi)
+	}
+
+	state = deviceplugin.State{Registered: true, Reason: deviceplugin.ReasonRegistered}
+	writeSpec(t, dir, "nvidia.yaml", strings.Replace(nvidiaSpec, "- name: all", "- name: GPU-b\n- name: all", 1))
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status = getGPUNode(t, c).Status
+	if !meta.IsStatusConditionTrue(status.Conditions, ConditionDevicePluginReady) || !meta.IsStatusConditionTrue(status.Conditions, ConditionCDIReady) {
+		t.Fatalf("conditions = %+v", status.Conditions)
+	}
+	if !meta.IsStatusConditionTrue(status.Conditions, ConditionInventoryReady) {
+		t.Fatal("InventoryReady was lost")
+	}
+}
+
+type fakeHolders map[string]v1alpha1.PodReference
+
+func (f fakeHolders) LeaseHolders() map[string]v1alpha1.PodReference { return f }
+func (f fakeHolders) Kick()                                          {}
+
+func TestSyncFeedsThePoolAndShowsLeases(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1", UID: "node-uid"}}
+	existing := &v1alpha1.GPUNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1"},
+		Spec:       v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a", "GPU-b"}},
+	}
+	c := newClient(t, node, existing)
+	// GPU-a is still held by a regular pod, so only GPU-b is in the pool.
+	a := newAgent(c, fakeSource{node: twoGPUs()}, &fakeAllocations{allocs: trainerOnGPUA()})
+	a.Leases = lease.NewManager()
+	a.Workloads = fakeHolders{"GPU-b": {Namespace: "ml", Name: "model", Container: "main"}}
+	slots := &recordingSink{}
+	a.Slots = slots
+	a.SlotsPerGPU = 4
+
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pool := a.Leases.Pool()
+	if len(pool) != 1 || pool[0].UUID != "GPU-b" || pool[0].Chip == "" {
+		t.Fatalf("pool = %+v", pool)
+	}
+	if len(slots.devices) != 4 {
+		t.Fatalf("slots = %d, want 4", len(slots.devices))
+	}
+	status := getGPUNode(t, c).Status
+	if status.LeasedCount != 1 || status.GPUs[1].LeasedTo == nil || status.GPUs[1].LeasedTo.Name != "model" || status.GPUs[0].LeasedTo != nil {
+		t.Fatalf("leases in the status: count=%d gpus=%+v", status.LeasedCount, status.GPUs)
+	}
+}
+
+func TestPluginDevicesKeepLeasedGPUsReserved(t *testing.T) {
+	devices := PluginDevices(twoGPUs(), v1alpha1.GPUNodeSpec{}, map[string]bool{"GPU-b": true})
+	if devices[0].Reserved || !devices[1].Reserved {
+		t.Fatalf("a leased GPU must stay away from regular pods even without a reservation: %+v", devices)
 	}
 }

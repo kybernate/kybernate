@@ -1,0 +1,165 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: gpuworkloads.kybernate.io
+spec:
+  group: kybernate.io
+  names:
+    kind: GPUWorkload
+    listKind: GPUWorkloadList
+    plural: gpuworkloads
+    shortNames:
+    - gpuw
+    singular: gpuworkload
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.state
+      name: State
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.nodeName
+      name: Node
+      type: string
+    - jsonPath: .status.isolation
+      name: Isolation
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GPUWorkload is a pod with the RuntimeClass kybernate whose containers hold
+          GPUs from the Kybernate pool. The node agent creates it for every such pod,
+          with the pod's name, and deletes it together with the pod. Set spec.state
+          to suspend or resume the workload.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GPUWorkloadSpec is the desired state of a GPU workload.
+            properties:
+              state:
+                default: Running
+                description: |-
+                  State is Running or Suspended. Suspending keeps the processes alive
+                  and moves their GPU memory into host memory, which frees the GPUs.
+                enum:
+                - Running
+                - Suspended
+                type: string
+            type: object
+          status:
+            description: GPUWorkloadStatus is the observed state of a GPU workload.
+            properties:
+              containers:
+                description: Containers lists the containers with GPUs.
+                items:
+                  description: ContainerLease describes the GPUs of one container
+                    of the workload.
+                  properties:
+                    containerID:
+                      description: ContainerID is the runtime's ID of the container.
+                      type: string
+                    gpuCount:
+                      description: GPUCount is the number of GPUs the container requested.
+                      format: int32
+                      type: integer
+                    leasedGPUs:
+                      description: |-
+                        LeasedGPUs are the GPUs the container holds right now. Empty while
+                        the workload is suspended.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    name:
+                      description: Name of the container.
+                      type: string
+                    physicalGPUs:
+                      description: |-
+                        PhysicalGPUs are the physical GPUs behind VisibleGPUs, in the same
+                        order. They differ after the workload resumed on other GPUs.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    visibleGPUs:
+                      description: |-
+                        VisibleGPUs are the GPUs the container's processes see, in the order
+                        of CUDA_VISIBLE_DEVICES. With the isolation strict, they are the
+                        leased GPUs.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                  required:
+                  - gpuCount
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              isolation:
+                description: Isolation of the workload's containers.
+                enum:
+                - strict
+                - migratable
+                type: string
+              lastResumeSeconds:
+                description: LastResumeSeconds is how long the last resume took.
+                type: string
+              lastSuspendSeconds:
+                description: LastSuspendSeconds is how long the last suspend took.
+                type: string
+              lastTransitionTime:
+                description: LastTransitionTime is when the phase last changed.
+                format: date-time
+                type: string
+              message:
+                description: Message explains the phase, for example why the workload
+                  waits.
+                type: string
+              nodeName:
+                description: NodeName is the node the workload runs on.
+                type: string
+              phase:
+                description: Phase is the current state of the workload.
+                enum:
+                - Pending
+                - Running
+                - Suspending
+                - Suspended
+                - Waiting
+                - Resuming
+                - Failed
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

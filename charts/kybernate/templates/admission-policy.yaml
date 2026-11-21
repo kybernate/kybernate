@@ -29,6 +29,29 @@ spec:
       message: >-
         GPUs are allocated by Kybernate. Request nvidia.com/gpu instead of setting
         NVIDIA_VISIBLE_DEVICES.
+    {{- if include "kybernate.leases" $ }}
+    {{- $rc := $.Values.nodeAgent.leases.runtimeClassName }}
+    {{- $res := $.Values.nodeAgent.leases.resourceName }}
+    - expression: >-
+        (has(object.spec.runtimeClassName) && object.spec.runtimeClassName == '{{ $rc }}') ||
+        object.spec.containers.all(c, !has(c.resources) ||
+          ((!has(c.resources.limits) || !('{{ $res }}' in c.resources.limits)) &&
+           (!has(c.resources.requests) || !('{{ $res }}' in c.resources.requests))))
+      message: >-
+        Pods that request {{ $res }} need the RuntimeClass {{ $rc }}.
+    - expression: >-
+        !has(object.spec.runtimeClassName) || object.spec.runtimeClassName != '{{ $rc }}' ||
+        object.spec.containers.all(c, !has(c.resources) ||
+          ((!has(c.resources.limits) || !('{{ .resourceName }}' in c.resources.limits)) &&
+           (!has(c.resources.requests) || !('{{ .resourceName }}' in c.resources.requests))))
+      message: >-
+        Pods with the RuntimeClass {{ $rc }} get their GPUs as {{ $res }}, not as {{ .resourceName }}.
+    - expression: >-
+        !has(object.metadata.annotations) || !('kybernate.io/isolation' in object.metadata.annotations) ||
+        object.metadata.annotations['kybernate.io/isolation'] in ['strict', 'migratable']
+      message: >-
+        The annotation kybernate.io/isolation must be strict or migratable.
+    {{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
