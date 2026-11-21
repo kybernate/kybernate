@@ -103,6 +103,8 @@ held=$(jp gpunode "$NODE" -o jsonpath='{.status.gpus[*].allocatedTo[*].name}{.st
 [[ -z "$held" ]] || { echo "pods hold GPUs of the node: $held" >&2; exit 2; }
 list=$(printf '"%s",' "${gpus[@]}"); list="[${list%,}]"
 k patch gpunode "$NODE" --type merge -p "{\"spec\":{\"reservedGPUs\":$list}}" >/dev/null
+# A namespace of an earlier run may still be terminating.
+until [[ "$(k get namespace "$NS" -o jsonpath='{.status.phase}' 2>/dev/null)" != Terminating ]]; do sleep 2; done
 k create namespace "$NS" >/dev/null 2>&1 || true
 k -n "$NS" apply -f - >/dev/null <<'EOF'
 apiVersion: v1

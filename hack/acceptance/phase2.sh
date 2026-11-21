@@ -109,6 +109,8 @@ if [[ -n "$original" && "$original" != "[]" ]]; then
 	echo "lifting the reservations for the test, they are restored at the end: $original"
 	reserve "[]"
 fi
+# A namespace of an earlier run may still be terminating.
+until [[ "$(k get namespace "$NS" -o jsonpath='{.status.phase}' 2>/dev/null)" != Terminating ]]; do sleep 2; done
 k create namespace "$NS" >/dev/null 2>&1 || true
 for g in "${gpus[@]}"; do
 	expect "GPU $g is Free" 15 is_state "$g" Free || exit 2
