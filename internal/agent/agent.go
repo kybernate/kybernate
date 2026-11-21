@@ -24,6 +24,7 @@ import (
 	"github.com/kybernate/kybernate/internal/allocation"
 	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
+	"github.com/kybernate/kybernate/internal/lease"
 )
 
 // DefaultPendingInterval is how often the agent checks for released GPUs
@@ -32,6 +33,12 @@ const DefaultPendingInterval = 5 * time.Second
 
 // watchRetryDelay is the pause before a failed watch is started again.
 const watchRetryDelay = 5 * time.Second
+
+// LeaseHolders reports, per leased GPU, the container holding it.
+type LeaseHolders interface {
+	LeaseHolders() map[string]v1alpha1.PodReference
+	Kick()
+}
 
 // DeviceSink receives the GPUs of the node and their reservations after every
 // successful refresh. The device plugin implements it.
@@ -66,6 +73,15 @@ type Agent struct {
 	// CDI, if set, checks that the CDI specifications describe every GPU and
 	// reports the result as the condition CDIReady.
 	CDI *CDISpecs
+	// Leases, if set, receives the Kybernate pool after every refresh: the
+	// reserved GPUs that no regular pod holds.
+	Leases *lease.Manager
+	// Workloads reports which container holds which leased GPU.
+	Workloads LeaseHolders
+	// Slots, if set, receives one scheduling slot of kybernate.io/gpu per
+	// pool GPU and SlotsPerGPU.
+	Slots       DeviceSink
+	SlotsPerGPU int
 	// Now returns the current time. It defaults to time.Now.
 	Now func() time.Time
 
@@ -168,6 +184,7 @@ func (a *Agent) Sync(ctx context.Context) error {
 			gpuNode.Status = BuildStatus(inv, allocs, gpuNode.Spec, gpuNode.Status, metav1.NewTime(a.now()))
 		}
 		a.setConditions(&gpuNode.Status, collectErr == nil, cdiMissing, cdiErr)
+		a.setLeases(&gpuNode.Status)
 		return a.Client.Status().Update(ctx, gpuNode)
 	})
 	if err != nil {
@@ -180,8 +197,19 @@ func (a *Agent) Sync(ctx context.Context) error {
 		return fmt.Errorf("reading the GPU allocations: %w", allocErr)
 	}
 
+	leased := a.leasedGPUs()
 	if a.Devices != nil {
-		a.Devices.Update(PluginDevices(inv, gpuNode.Spec))
+		a.Devices.Update(PluginDevices(inv, gpuNode.Spec, leased))
+	}
+	if a.Leases != nil {
+		pool := LeasePool(inv, gpuNode.Status)
+		a.Leases.SetPool(pool)
+		if a.Slots != nil {
+			a.Slots.Update(Slots(len(pool), a.SlotsPerGPU))
+		}
+		if a.Workloads != nil {
+			a.Workloads.Kick()
+		}
 	}
 	a.reportReservedMIG(ReservedMIGGPUs(inv, gpuNode.Spec))
 	a.pending.Store(HasPending(gpuNode.Status))
@@ -190,6 +218,33 @@ func (a *Agent) Sync(ctx context.Context) error {
 		a.Log.Info("GPU inventory published", "gpus", len(inv.GPUs), "driver", inv.DriverVersion)
 	}
 	return nil
+}
+
+func (a *Agent) leasedGPUs() map[string]bool {
+	out := map[string]bool{}
+	if a.Leases != nil {
+		for g := range a.Leases.Leases() {
+			out[g] = true
+		}
+	}
+	return out
+}
+
+// setLeases shows in the status which container holds which pool GPU.
+func (a *Agent) setLeases(status *v1alpha1.GPUNodeStatus) {
+	status.LeasedCount = 0
+	var holders map[string]v1alpha1.PodReference
+	if a.Workloads != nil {
+		holders = a.Workloads.LeaseHolders()
+	}
+	for i := range status.GPUs {
+		g := &status.GPUs[i]
+		g.LeasedTo = nil
+		if h, ok := holders[g.UUID]; ok {
+			g.LeasedTo = &h
+			status.LeasedCount++
+		}
+	}
 }
 
 // setConditions adds DevicePluginReady and CDIReady, if the agent checks them.

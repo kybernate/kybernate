@@ -122,6 +122,10 @@ type GPU struct {
 	// State tells who the GPU currently belongs to.
 	// +optional
 	State GPUState `json:"state,omitempty"`
+	// LeasedTo names the container of a Kybernate workload that holds the
+	// GPU right now. Only GPUs of the Kybernate pool are leased.
+	// +optional
+	LeasedTo *PodReference `json:"leasedTo,omitempty"`
 }
 
 // GPUNodeStatus is the observed state of the GPUs of one node.
@@ -142,6 +146,9 @@ type GPUNodeStatus struct {
 	// regular pod to release them.
 	// +optional
 	PendingCount int32 `json:"pendingCount,omitempty"`
+	// LeasedCount is the number of pool GPUs leased to Kybernate workloads.
+	// +optional
+	LeasedCount int32 `json:"leasedCount,omitempty"`
 	// GPUs is the inventory of the node.
 	// +optional
 	// +listType=map
@@ -166,6 +173,7 @@ type GPUNodeStatus struct {
 // +kubebuilder:printcolumn:name="GPUs",type=integer,JSONPath=`.status.gpuCount`
 // +kubebuilder:printcolumn:name="Reserved",type=integer,JSONPath=`.status.reservedCount`
 // +kubebuilder:printcolumn:name="Pending",type=integer,JSONPath=`.status.pendingCount`
+// +kubebuilder:printcolumn:name="Leased",type=integer,JSONPath=`.status.leasedCount`
 // +kubebuilder:printcolumn:name="Driver",type=string,JSONPath=`.status.driverVersion`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type GPUNode struct {

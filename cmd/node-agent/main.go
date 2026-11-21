@@ -26,9 +26,12 @@ import (
 	"github.com/kybernate/kybernate/api/v1alpha1"
 	"github.com/kybernate/kybernate/internal/agent"
 	"github.com/kybernate/kybernate/internal/allocation"
+	"github.com/kybernate/kybernate/internal/checkpoint"
 	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
+	"github.com/kybernate/kybernate/internal/lease"
 	"github.com/kybernate/kybernate/internal/version"
+	"github.com/kybernate/kybernate/internal/workload"
 )
 
 type options struct {
@@ -43,6 +46,13 @@ type options struct {
 	deviceStrategy     string
 	cdiKind            string
 	cdiSpecDirs        string
+	leases             bool
+	runtimeClass       string
+	leaseResource      string
+	slotsPerGPU        int
+	nriSocket          string
+	cudaCheckpoint     string
+	procRoot           string
 }
 
 func main() {
@@ -58,6 +68,13 @@ func main() {
 	flag.StringVar(&o.deviceStrategy, "device-list-strategy", string(deviceplugin.StrategyEnvVar), "how GPUs are handed to containers: envvar (NVIDIA_VISIBLE_DEVICES, needs the NVIDIA runtime) or cdi")
 	flag.StringVar(&o.cdiKind, "cdi-kind", deviceplugin.DefaultCDIKind, "CDI device kind of the GPUs, used with --device-list-strategy=cdi")
 	flag.StringVar(&o.cdiSpecDirs, "cdi-spec-dirs", strings.Join(agent.DefaultCDISpecDirs, ","), "comma-separated directories with CDI specifications, checked with --device-list-strategy=cdi")
+	flag.BoolVar(&o.leases, "leases", false, "lease GPUs of the Kybernate pool to pods with the Kybernate RuntimeClass and suspend or resume them; needs --device-plugin")
+	flag.StringVar(&o.runtimeClass, "runtime-class", workload.DefaultRuntimeClass, "RuntimeClass of the pods that get GPUs from the Kybernate pool")
+	flag.StringVar(&o.leaseResource, "lease-resource", workload.DefaultResourceName, "extended resource that pods request pool GPUs with")
+	flag.IntVar(&o.slotsPerGPU, "slots-per-gpu", 4, "scheduling slots of --lease-resource per pool GPU; more than 1 lets suspended workloads share GPUs")
+	flag.StringVar(&o.nriSocket, "nri-socket", workload.DefaultNRISocket, "containerd's NRI socket")
+	flag.StringVar(&o.cudaCheckpoint, "cuda-checkpoint", "/usr/local/bin/cuda-checkpoint", "path of NVIDIA's cuda-checkpoint")
+	flag.StringVar(&o.procRoot, "proc", "/proc", "proc file system of the host; the agent needs the host's PID namespace")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
@@ -130,6 +147,37 @@ func run(log *slog.Logger, o options) error {
 		}
 	}
 
+	var workloads *workload.Manager
+	var slots *deviceplugin.Plugin
+	if o.leases {
+		if plugin == nil {
+			return errors.New("--leases needs --device-plugin")
+		}
+		leases := lease.NewManager()
+		leases.OnChange = a.Trigger
+		workloads = &workload.Manager{
+			Client:       c,
+			NodeName:     nodeName,
+			RuntimeClass: o.runtimeClass,
+			ResourceName: o.leaseResource,
+			CDIKind:      o.cdiKind,
+			Leases:       leases,
+			Tool:         checkpoint.Tool{Path: o.cudaCheckpoint},
+			Procs:        checkpoint.Procfs{Root: o.procRoot},
+			Log:          log,
+		}
+		slots = deviceplugin.New(log)
+		slots.Dir = o.devicePluginDir
+		slots.ResourceName = o.leaseResource
+		slots.Endpoint = "kybernate-slots.sock"
+		slots.Strategy = deviceplugin.StrategyNone
+		slots.Conflicts = nil
+		a.Leases = leases
+		a.Workloads = workloads
+		a.Slots = slots
+		a.SlotsPerGPU = o.slotsPerGPU
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -144,16 +192,21 @@ func run(log *slog.Logger, o options) error {
 	})
 	server := &http.Server{Addr: o.healthAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
-	errs := make(chan error, 3)
+	errs := make(chan error, 6)
 	go func() { errs <- server.ListenAndServe() }()
 	go func() { errs <- a.Run(ctx) }()
 	if plugin != nil {
 		go func() { errs <- plugin.Run(ctx) }()
 	}
+	if workloads != nil {
+		go func() { errs <- slots.Run(ctx) }()
+		go func() { errs <- workloads.RunNRI(ctx, o.nriSocket) }()
+		go func() { errs <- workloads.Run(ctx) }()
+	}
 
 	log.Info("node agent started", "version", version.Version, "commit", version.Commit, "node", nodeName,
 		"interval", o.interval.String(), "podResourcesSocket", o.podResourcesSocket, "gpuResources", resourceNames,
-		"devicePlugin", o.devicePlugin)
+		"devicePlugin", o.devicePlugin, "leases", o.leases)
 
 	select {
 	case <-ctx.Done():

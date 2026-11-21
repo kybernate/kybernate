@@ -74,6 +74,28 @@ nodeAgent:
       # RuntimeClass to read all GPUs.
       exemptNamespaces: [kube-system]
 
+  # GPU leases and the warm tier. Pods with the RuntimeClass below request
+  # GPUs of the Kybernate pool as kybernate.io/gpu. The agent leases them
+  # through containerd's NRI and suspends or resumes the pods through their
+  # GPUWorkload. Needs devicePlugin.enabled.
+  leases:
+    enabled: true
+    # RuntimeClass of Kybernate workloads, created by the chart.
+    runtimeClassName: kybernate
+    # containerd handler of the RuntimeClass. runc is the default handler of
+    # containerd and K3s.
+    runtimeHandler: runc
+    # Extended resource the pods request GPUs with.
+    resourceName: kybernate.io/gpu
+    # Scheduling slots of the resource per pool GPU. With more than 1, more
+    # workloads than GPUs can be placed on a node; a workload whose GPUs are
+    # all taken waits until another one is suspended.
+    slotsPerGPU: 4
+    # containerd's NRI socket. NRI is enabled by default in containerd 2.
+    nriSocket: /var/run/nri/nri.sock
+    # NVIDIA's cuda-checkpoint on the host, see the host prerequisites.
+    cudaCheckpointPath: /usr/local/bin/cuda-checkpoint
+
   resources:
     requests:
       cpu: 10m

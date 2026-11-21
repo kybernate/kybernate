@@ -41,6 +41,10 @@ const (
 	// NVIDIA runtime. NVIDIA_VISIBLE_DEVICES is set to "void", so an image
 	// that sets it to "all" gets no further GPUs from the NVIDIA runtime.
 	StrategyCDI Strategy = "cdi"
+	// StrategyNone hands nothing to the container. It serves resources that
+	// only count for the scheduler, such as kybernate.io/gpu, whose GPUs are
+	// injected by the node agent's NRI plugin.
+	StrategyNone Strategy = "none"
 )
 
 // Defaults of the plugin.
@@ -278,6 +282,9 @@ func (p *Plugin) Allocate(_ context.Context, req *pluginapi.AllocateRequest) (*p
 }
 
 func (p *Plugin) containerResponse(ids []string) *pluginapi.ContainerAllocateResponse {
+	if p.Strategy == StrategyNone {
+		return &pluginapi.ContainerAllocateResponse{}
+	}
 	if p.Strategy == StrategyCDI {
 		out := &pluginapi.ContainerAllocateResponse{Envs: map[string]string{"NVIDIA_VISIBLE_DEVICES": "void"}}
 		for _, id := range ids {

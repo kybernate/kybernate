@@ -13,6 +13,7 @@ import (
 	"github.com/kybernate/kybernate/internal/allocation"
 	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
+	"github.com/kybernate/kybernate/internal/lease"
 )
 
 // ConditionInventoryReady reports whether the last inventory succeeded.
@@ -150,11 +151,13 @@ func FailedStatus(previous v1alpha1.GPUNodeStatus, reason string, err error) v1a
 
 // PluginDevices lists the GPUs for the device plugin. Every GPU in the spec
 // counts as reserved from the moment it is listed there, also while it still
-// waits for a regular pod to release it, so it cannot go to the next pod.
+// waits for a regular pod to release it, so it cannot go to the next pod. A
+// GPU leased to a Kybernate workload stays reserved until the lease ends,
+// even if its reservation was lifted meanwhile.
 //
 // GPUs with MIG enabled are left out: as a whole they offer no compute to a
 // container, and the plugin does not offer MIG devices yet.
-func PluginDevices(inv inventory.Node, spec v1alpha1.GPUNodeSpec) []deviceplugin.Device {
+func PluginDevices(inv inventory.Node, spec v1alpha1.GPUNodeSpec, leased map[string]bool) []deviceplugin.Device {
 	out := make([]deviceplugin.Device, 0, len(inv.GPUs))
 	for _, gpu := range inv.GPUs {
 		if gpu.MIGEnabled {
@@ -169,9 +172,44 @@ func PluginDevices(inv inventory.Node, spec v1alpha1.GPUNodeSpec) []deviceplugin
 		}
 		out = append(out, deviceplugin.Device{
 			ID:       gpu.UUID,
-			Reserved: slices.Contains(spec.ReservedGPUs, gpu.UUID),
+			Reserved: slices.Contains(spec.ReservedGPUs, gpu.UUID) || leased[gpu.UUID],
 			Links:    links,
 		})
+	}
+	return out
+}
+
+// LeasePool returns the Kybernate pool: reserved GPUs that no regular pod
+// holds anymore (state Reserved), without MIG. GPUs of the same chip, which
+// PCI device ID and name identify, can take over each other's workloads.
+func LeasePool(inv inventory.Node, status v1alpha1.GPUNodeStatus) []lease.GPU {
+	states := map[string]v1alpha1.GPUState{}
+	for _, g := range status.GPUs {
+		states[g.UUID] = g.State
+	}
+	var pool []lease.GPU
+	for _, gpu := range inv.GPUs {
+		if gpu.MIGEnabled || states[gpu.UUID] != v1alpha1.GPUStateReserved {
+			continue
+		}
+		links := map[string]int{}
+		for _, l := range gpu.Links {
+			links[l.PeerUUID] = deviceplugin.LinkScore(l)
+		}
+		pool = append(pool, lease.GPU{UUID: gpu.UUID, Chip: fmt.Sprintf("%04x/%s", gpu.PCIDeviceID, gpu.Name), Links: links})
+	}
+	return pool
+}
+
+// Slots returns the scheduling slots of kybernate.io/gpu: perGPU slots for
+// every pool GPU. More slots than GPUs let suspended workloads share GPUs.
+func Slots(poolGPUs, perGPU int) []deviceplugin.Device {
+	if perGPU < 1 {
+		perGPU = 1
+	}
+	out := make([]deviceplugin.Device, 0, poolGPUs*perGPU)
+	for i := range poolGPUs * perGPU {
+		out = append(out, deviceplugin.Device{ID: fmt.Sprintf("slot-%d", i)})
 	}
 	return out
 }

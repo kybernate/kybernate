@@ -25,6 +25,7 @@ import (
 	"github.com/kybernate/kybernate/internal/allocation"
 	"github.com/kybernate/kybernate/internal/deviceplugin"
 	"github.com/kybernate/kybernate/internal/inventory"
+	"github.com/kybernate/kybernate/internal/lease"
 )
 
 type fakeSource struct {
@@ -370,7 +371,7 @@ func TestMIGEnabledGPUs(t *testing.T) {
 	inv.GPUs[1].MIGEnabled = true
 	spec := v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a", "GPU-b"}}
 
-	devices := PluginDevices(inv, spec)
+	devices := PluginDevices(inv, spec, nil)
 	if len(devices) != 1 || devices[0].ID != "GPU-a" {
 		t.Fatalf("a GPU with MIG enabled was offered as a whole: %+v", devices)
 	}
@@ -463,5 +464,48 @@ func TestSyncReportsDevicePluginAndCDI(t *testing.T) {
 	}
 	if !meta.IsStatusConditionTrue(status.Conditions, ConditionInventoryReady) {
 		t.Fatal("InventoryReady was lost")
+	}
+}
+
+type fakeHolders map[string]v1alpha1.PodReference
+
+func (f fakeHolders) LeaseHolders() map[string]v1alpha1.PodReference { return f }
+func (f fakeHolders) Kick()                                          {}
+
+func TestSyncFeedsThePoolAndShowsLeases(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1", UID: "node-uid"}}
+	existing := &v1alpha1.GPUNode{
+		ObjectMeta: metav1.ObjectMeta{Name: "gpu-node-1"},
+		Spec:       v1alpha1.GPUNodeSpec{ReservedGPUs: []string{"GPU-a", "GPU-b"}},
+	}
+	c := newClient(t, node, existing)
+	// GPU-a is still held by a regular pod, so only GPU-b is in the pool.
+	a := newAgent(c, fakeSource{node: twoGPUs()}, &fakeAllocations{allocs: trainerOnGPUA()})
+	a.Leases = lease.NewManager()
+	a.Workloads = fakeHolders{"GPU-b": {Namespace: "ml", Name: "model", Container: "main"}}
+	slots := &recordingSink{}
+	a.Slots = slots
+	a.SlotsPerGPU = 4
+
+	if err := a.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	pool := a.Leases.Pool()
+	if len(pool) != 1 || pool[0].UUID != "GPU-b" || pool[0].Chip == "" {
+		t.Fatalf("pool = %+v", pool)
+	}
+	if len(slots.devices) != 4 {
+		t.Fatalf("slots = %d, want 4", len(slots.devices))
+	}
+	status := getGPUNode(t, c).Status
+	if status.LeasedCount != 1 || status.GPUs[1].LeasedTo == nil || status.GPUs[1].LeasedTo.Name != "model" || status.GPUs[0].LeasedTo != nil {
+		t.Fatalf("leases in the status: count=%d gpus=%+v", status.LeasedCount, status.GPUs)
+	}
+}
+
+func TestPluginDevicesKeepLeasedGPUsReserved(t *testing.T) {
+	devices := PluginDevices(twoGPUs(), v1alpha1.GPUNodeSpec{}, map[string]bool{"GPU-b": true})
+	if devices[0].Reserved || !devices[1].Reserved {
+		t.Fatalf("a leased GPU must stay away from regular pods even without a reservation: %+v", devices)
 	}
 }
