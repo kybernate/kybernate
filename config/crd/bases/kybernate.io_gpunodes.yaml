@@ -26,6 +26,9 @@ spec:
     - jsonPath: .status.pendingCount
       name: Pending
       type: integer
+    - jsonPath: .status.leasedCount
+      name: Leased
+      type: integer
     - jsonPath: .status.driverVersion
       name: Driver
       type: string
@@ -185,6 +188,25 @@ spec:
                       description: Index is the NVML index of the GPU on its node.
                       format: int32
                       type: integer
+                    leasedTo:
+                      description: |-
+                        LeasedTo names the container of a Kybernate workload that holds the
+                        GPU right now. Only GPUs of the Kybernate pool are leased.
+                      properties:
+                        container:
+                          description: Container is the container inside the pod that
+                            holds the GPU.
+                          type: string
+                        name:
+                          description: Name of the pod.
+                          type: string
+                        namespace:
+                          description: Namespace of the pod.
+                          type: string
+                      required:
+                      - name
+                      - namespace
+                      type: object
                     links:
                       description: Links describes the connections to the other GPUs
                         of the node.
@@ -278,6 +300,11 @@ spec:
                 description: LastInventoryTime is when the inventory was last refreshed.
                 format: date-time
                 type: string
+              leasedCount:
+                description: LeasedCount is the number of pool GPUs leased to Kybernate
+                  workloads.
+                format: int32
+                type: integer
               pendingCount:
                 description: |-
                   PendingCount is the number of reserved GPUs that still wait for a

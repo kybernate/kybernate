@@ -17,6 +17,11 @@ spec:
         {{- include "kybernate.nodeAgent.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "kybernate.nodeAgent.name" . }}
+      {{- if include "kybernate.leases" . }}
+      # cuda-checkpoint and the lookup of a container's processes need the
+      # host's PIDs.
+      hostPID: true
+      {{- end }}
       {{- with .Values.nodeAgent.runtimeClassName }}
       runtimeClassName: {{ . }}
       {{- end }}
@@ -47,6 +52,17 @@ spec:
             - --device-plugin-resource={{ .resourceName }}
             - --device-list-strategy={{ .deviceListStrategy }}
             - --cdi-kind={{ .cdiKind }}
+            - --cdi-spec-dirs={{ .cdiSpecPath }}
+            {{- end }}
+            {{- end }}
+            {{- if include "kybernate.leases" . }}
+            {{- with .Values.nodeAgent.leases }}
+            - --leases
+            - --runtime-class={{ .runtimeClassName }}
+            - --lease-resource={{ .resourceName }}
+            - --slots-per-gpu={{ .slotsPerGPU }}
+            - --nri-socket={{ .nriSocket }}
+            - --cuda-checkpoint={{ .cudaCheckpointPath }}
             {{- end }}
             {{- end }}
           env:
@@ -58,8 +74,9 @@ spec:
             # allocating any of them.
             - name: NVIDIA_VISIBLE_DEVICES
               value: all
+            # cuda-checkpoint needs libcuda (compute) for the warm tier.
             - name: NVIDIA_DRIVER_CAPABILITIES
-              value: utility
+              value: {{ if include "kybernate.leases" . }}compute,utility{{ else }}utility{{ end }}
           ports:
             - name: health
               containerPort: {{ .Values.nodeAgent.healthPort }}
@@ -80,17 +97,39 @@ spec:
             {{- if .Values.nodeAgent.devicePlugin.enabled }}
             - name: device-plugins
               mountPath: {{ .Values.nodeAgent.devicePlugin.path }}
+            {{- if eq .Values.nodeAgent.devicePlugin.deviceListStrategy "cdi" }}
+            # Read only, to check that the CDI specification describes every GPU.
+            - name: cdi-specs
+              mountPath: {{ .Values.nodeAgent.devicePlugin.cdiSpecPath }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+            {{- if include "kybernate.leases" . }}
+            - name: nri
+              mountPath: {{ dir .Values.nodeAgent.leases.nriSocket }}
+            - name: cuda-checkpoint
+              mountPath: /usr/local/bin/cuda-checkpoint
+              readOnly: true
             {{- end }}
           # The kubelet's PodResources socket belongs to root with mode 0755,
           # so only root can connect to it. The agent runs as UID 0 but
-          # without any capabilities and without privilege escalation.
+          # without privilege escalation. For the warm tier, cuda-checkpoint
+          # must reach the processes of other containers: it needs the host's
+          # PID namespace, SYS_PTRACE and no AppArmor confinement.
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
+              {{- if include "kybernate.leases" . }}
+              add: ["SYS_PTRACE"]
+            appArmorProfile:
+              type: Unconfined
+              {{- end }}
       volumes:
         - name: pod-resources
           hostPath:
@@ -101,5 +140,21 @@ spec:
           hostPath:
             path: {{ .Values.nodeAgent.devicePlugin.path }}
             type: Directory
+        {{- if eq .Values.nodeAgent.devicePlugin.deviceListStrategy "cdi" }}
+        - name: cdi-specs
+          hostPath:
+            path: {{ .Values.nodeAgent.devicePlugin.cdiSpecPath }}
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- end }}
+        {{- if include "kybernate.leases" . }}
+        - name: nri
+          hostPath:
+            path: {{ dir .Values.nodeAgent.leases.nriSocket }}
+            type: Directory
+        - name: cuda-checkpoint
+          hostPath:
+            path: {{ .Values.nodeAgent.leases.cudaCheckpointPath }}
+            type: File
         {{- end }}
 {{- end }}

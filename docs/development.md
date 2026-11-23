@@ -10,6 +10,10 @@ Kybernate is a Go monorepo. All components that run in the cluster are built fro
 | `cmd/node-agent/` | Entry point of the node agent, which runs as a DaemonSet on every GPU node |
 | `internal/inventory/` | GPU inventory through NVML: GPUs, VRAM, architecture and links between GPUs |
 | `internal/agent/` | Keeps the `GPUNode` resource of the local node up to date |
+| `internal/deviceplugin/` | Device plugins for `nvidia.com/gpu` and the scheduling slots of `kybernate.io/gpu` |
+| `internal/lease/` | The Kybernate pool and exclusive GPU leases per container, device maps for moving workloads |
+| `internal/checkpoint/` | Finds a container's processes and runs `cuda-checkpoint` |
+| `internal/workload/` | NRI plugin that injects leased GPUs, and the controller of `GPUWorkload`: suspend, resume, migration |
 | `internal/version/` | Build information |
 | `config/crd/bases/` | CRDs generated from the API types |
 | `charts/kybernate/` | Helm chart for all components. The CRDs are copied into `files/crds/` and installed and upgraded through the template `crds.yaml`. |
@@ -95,9 +99,18 @@ Kybernate follows [Semantic Versioning](https://semver.org/). All components and
 | `v0.1.0` | GPU inventory as `GPUNode` resources |
 | `v0.2.0` | GPUs blocked by kubelet allocation, reservations that wait for the release, immediate reaction to changes, CRD upgraded with the chart. Enforcement: the Kybernate device plugin replaces the NVIDIA device plugin and offers `nvidia.com/gpu` without the reserved GPUs, NVLink-aware allocation, admission policy against bypassing it. |
 
+## Acceptance and end-to-end tests
+
+Every phase ends with acceptance tests on a GPU cluster, see [Acceptance](acceptance/README.md). The scripts live in `hack/acceptance`. The Helm chart is additionally tested on k3d in CI with `hack/e2e/chart.sh`. To run it locally against any cluster without GPUs:
+
+```bash
+k3d cluster create e2e --wait
+hack/e2e/chart.sh
+```
+
 ## Testing on a GPU cluster without the registry
 
-For a development build, build the image on an amd64 GPU node and import it into the containerd of K3s on every node:
+For a development build, build the image on one of the GPU nodes, so that it matches their platform, and import it into the containerd of K3s on every node:
 
 ```bash
 docker build -t ghcr.io/kybernate/node-agent:dev .

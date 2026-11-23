@@ -24,6 +24,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion,
 		&GPUNode{},
 		&GPUNodeList{},
+		&GPUWorkload{},
+		&GPUWorkloadList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
