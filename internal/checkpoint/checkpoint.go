@@ -33,6 +33,9 @@ type Tool struct {
 	Path string
 	// LockTimeout is how long a lock waits for running CUDA work.
 	LockTimeout time.Duration
+	// Timeout bounds every call of cuda-checkpoint, 5 minutes by default.
+	// A call that does not finish in time is killed and fails.
+	Timeout time.Duration
 	// Run executes a command and returns its combined output. It defaults to
 	// exec.CommandContext.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -49,9 +52,18 @@ func (t Tool) run(ctx context.Context, args ...string) (string, error) {
 	if path == "" {
 		path = "cuda-checkpoint"
 	}
+	timeout := t.Timeout
+	if timeout == 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	out, err := run(ctx, path, args...)
 	msg := strings.TrimSpace(string(out))
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return msg, fmt.Errorf("cuda-checkpoint %s did not finish within %s", strings.Join(args[:2], " "), timeout)
+		}
 		if msg == "" {
 			msg = err.Error()
 		}
@@ -59,6 +71,9 @@ func (t Tool) run(ctx context.Context, args ...string) (string, error) {
 	}
 	return msg, nil
 }
+
+// DefaultTimeout bounds a call of cuda-checkpoint when Tool.Timeout is not set.
+const DefaultTimeout = 5 * time.Minute
 
 // State returns the CUDA state of a process. It fails for processes that do
 // not use CUDA.

@@ -52,6 +52,7 @@ type options struct {
 	slotsPerGPU        int
 	nriSocket          string
 	cudaCheckpoint     string
+	checkpointTimeout  time.Duration
 	procRoot           string
 }
 
@@ -74,6 +75,7 @@ func main() {
 	flag.IntVar(&o.slotsPerGPU, "slots-per-gpu", 4, "scheduling slots of --lease-resource per pool GPU; more than 1 lets suspended workloads share GPUs")
 	flag.StringVar(&o.nriSocket, "nri-socket", workload.DefaultNRISocket, "containerd's NRI socket")
 	flag.StringVar(&o.cudaCheckpoint, "cuda-checkpoint", "/usr/local/bin/cuda-checkpoint", "path of NVIDIA's cuda-checkpoint")
+	flag.DurationVar(&o.checkpointTimeout, "checkpoint-timeout", checkpoint.DefaultTimeout, "how long one call of cuda-checkpoint may take before it is killed")
 	flag.StringVar(&o.procRoot, "proc", "/proc", "proc file system of the host; the agent needs the host's PID namespace")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
@@ -162,7 +164,7 @@ func run(log *slog.Logger, o options) error {
 			ResourceName: o.leaseResource,
 			CDIKind:      o.cdiKind,
 			Leases:       leases,
-			Tool:         checkpoint.Tool{Path: o.cudaCheckpoint},
+			Tool:         checkpoint.Tool{Path: o.cudaCheckpoint, Timeout: o.checkpointTimeout},
 			Procs:        checkpoint.Procfs{Root: o.procRoot},
 			Log:          log,
 			OnChange:     a.Trigger,

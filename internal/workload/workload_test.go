@@ -372,6 +372,21 @@ func TestFailedCheckpointUndoesTheLocks(t *testing.T) {
 	}
 }
 
+func TestSuspendThatCannotBeUndoneFails(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	if _, err := e.start(e.pod("model", 1, ""), "main", 50, 51); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	e.tool.fail["checkpoint"] = true
+	e.tool.fail["unlock"] = true
+	e.setState("model", v1alpha1.WorkloadSuspended)
+	w := e.workload("model")
+	if w.Status.Phase != v1alpha1.PhaseFailed || !strings.Contains(w.Status.Message, "delete the pod") {
+		t.Fatalf("status = %+v", w.Status)
+	}
+}
+
 func TestSynchronizeRecoversLeases(t *testing.T) {
 	e := newEnv(t, "GPU-a", "GPU-b")
 	pod := e.pod("model", 1, "migratable")
