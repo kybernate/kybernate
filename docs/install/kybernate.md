@@ -294,6 +294,15 @@ A process ignoring `CUDA_VISIBLE_DEVICES` could use every pool GPU in a `migrata
 - A workload moves only between GPUs of the same node.
 - A container created while the node agent is not running gets no GPU. Its `GPUWorkload` shows `Failed`; delete the pod to get GPUs.
 - A workload must have initialized CUDA before it can be suspended.
+- `cuda-checkpoint` cannot checkpoint memory that processes share through CUDA IPC. Processes of a tensor-parallel workload must not exchange data through NCCL's peer-to-peer or shared-memory transports, or the checkpoint of a rank does not finish. For vLLM with `--tensor-parallel-size` above 1, set these variables in the container and add `--disable-custom-all-reduce`. The ranks then talk through sockets, which costs throughput between GPUs connected through NVLink.
+
+  ```yaml
+  env:
+    - { name: NCCL_P2P_DISABLE, value: "1" }
+    - { name: NCCL_SHM_DISABLE, value: "1" }
+    - { name: NCCL_CUMEM_ENABLE, value: "0" }
+  ```
+- A call of `cuda-checkpoint` that takes longer than five minutes is killed (`--checkpoint-timeout` of the node agent). If the processes cannot be resumed afterwards, the workload shows `Failed`; delete the pod.
 
 ## Update
 
