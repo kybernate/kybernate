@@ -105,6 +105,14 @@ func compare(a, b string) int {
 }
 
 func (m *Manager) reconcile(ctx context.Context, key podKey, cs []*container) error {
+	// containerd can lose a container without telling NRI, for example when
+	// it restarts while the container ends. Its leases must not outlive the pod.
+	if _, err := m.getPod(ctx, key.Namespace, key.Name, cs[0].PodUID); apierrors.IsNotFound(err) {
+		for _, c := range cs {
+			m.forget(c.ID, "pod deleted")
+		}
+		return nil
+	}
 	w, err := m.ensureWorkload(ctx, key, cs[0].PodUID)
 	if err != nil {
 		return err

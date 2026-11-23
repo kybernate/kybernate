@@ -260,6 +260,26 @@ func TestRestartedContainerReplacesTheStoppedOne(t *testing.T) {
 	}
 }
 
+func TestDeletedPodReleasesItsLeases(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	pod := e.pod("model", 1, "")
+	if _, err := e.start(pod, "main", 1); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	// The pod is gone, but NRI never reported the container as stopped.
+	if err := e.c.Delete(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	if free := e.m.Leases.Free(); !slices.Equal(free, []string{"GPU-a"}) {
+		t.Fatalf("free = %v, want the GPU of the deleted pod back", free)
+	}
+	if len(e.m.LeaseHolders()) != 0 {
+		t.Fatalf("lease holders = %v", e.m.LeaseHolders())
+	}
+}
+
 func TestSuspendAndResumeStrict(t *testing.T) {
 	e := newEnv(t, "GPU-a", "GPU-b")
 	pod := e.pod("model", 1, "")
