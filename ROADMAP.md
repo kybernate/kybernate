@@ -8,11 +8,11 @@ Kybernate is built in phases. Each phase ends with documented, reproducible acce
 | 2 | GPU inventory and reservation | `kybernate` | done in `v0.2.0`, see [acceptance](docs/acceptance/phase-2.md) |
 | 3 | Minimal dashboard: inventory and reservation | `dashboard` | first release `v0.1.0` |
 | 4 | Node agent: GPU leases and the warm tier | `kybernate` | done, see [acceptance](docs/acceptance/phase-4.md) |
-| 5 | Runtime shim and the cold tier | `kybernate` | planned |
-| 6 | Model switching on a node | `kybernate` | planned |
-| 7 | Cluster scheduling | `kybernate` | planned |
-| 8 | Full dashboard and access control | `dashboard`, `kybernate` | planned |
-| 9 | Checkpoint registry and migration | `kybernate` | planned |
+| 5 | Cold tier, local model snapshot builds and restores into new pods | `kybernate` | in progress |
+| 6 | Single-node model switching from prepared snapshots | `kybernate` | planned |
+| 7 | Cluster scheduling and concurrent replicas from one generation | `kybernate` | planned |
+| 8 | Full dashboard, model availability at zero replicas and access control | `dashboard`, `kybernate` | planned |
+| 9 | Checkpoint registry, snapshot distribution and migration | `kybernate` | planned |
 | 10 | RKE2 | `kybernate` | planned |
 | 11 | Kubernetes vanilla (kubeadm) | `kybernate` | planned |
 | 12 | k0s | `kybernate` | planned |
@@ -75,28 +75,39 @@ Without its own GPU allocation, model switching is impossible. A pod that reques
 - **Dashboard:** It shows which lease each GPU carries and whether an instance is hot or warm.
 - **API:** Suspend and resume through `spec.state` of a `GPUWorkload`, one per Kybernate pod.
 
-## Phase 5 – Runtime shim and the cold tier
+## Phase 5 – Cold tier and reusable model snapshots
+
+### Runtime integration
 
 - A containerd shim behind the RuntimeClass `kybernate`.
-- Spills a warm instance to the node's NVMe with CRIU and restores it.
+- Spills a warm instance to the node's disk with CRIU and restores it.
   - The shim keeps reporting the container as running, so neither containerd nor the kubelet restart it while its processes are gone.
-- `cuda-checkpoint` and CRIU are orchestrated for all tensor-parallel ranks of an instance.
-- RAM and disk budgets per node, enforced by the node agent.
-- A decision on which runc the shim uses: the one shipped by the distribution, or a current upstream runc for the `kybernate` class only.
+
+An alternative to the shim keeps an init process alive as PID 1 while CRIU saves and restores its child process tree. Test both designs in the original container and in a fresh pod with its own namespaces, cgroup and GPU lease. Include every tensor-parallel rank. The spike also compares the distribution's runc with an upstream runc dedicated to this RuntimeClass.
+
+### Local build and restore
+
+- A Kybernate build Job warms vLLM with synthetic requests for the configured input and batch sizes. Once the queue and active requests have drained, the builder captures the process tree and CUDA state of all tensor-parallel ranks with CRIU and `cuda-checkpoint`. Kybernate owns the build, snapshot format and restore.
+- Produce one immutable generation per supported model revision and GPU/runtime profile. Record quantization, runtime image digest, vLLM version and flags, GPU type, count and topology, tensor parallelism, host runtime versions and file checksums. Publish the verified files on local disk independently of the build pod. The same files can serve restores from disk or from the host page cache.
+- The node agent enforces RAM and disk budgets on each node.
+
+**Planned acceptance.** Delete the build pod. Restore the same generation twice in succession into fresh K3s pods on the same node. Verify each pod's identity and lease, check the answer to a fixed request and verify the original file checksums after both restores.
 
 ## Phase 6 – Model switching on a node
 
-- OpenAI-compatible queueing proxy with bounded per-model queues and a single restore per model.
-- HTTP and SSE drain before a suspend, and readiness checks after a resume.
-- Model switches A → B → A through the warm and the cold tier.
-- Benchmarks against cold starts: time to first token, restore duration, memory footprint.
+- An OpenAI-compatible proxy keeps a bounded queue per model revision. Requests waiting for that revision share one pending restore. The proxy forwards each request once the replica is ready.
+- When B needs A's GPUs, stop routing new work to A and drain its HTTP requests and SSE streams. For stateless inference, terminate the drained replica, release its lease and restore B from its prepared generation. Workloads that need to retain instance state can still suspend and resume through RAM or disk.
+
+**Planned acceptance.** Request B while A is streaming. Verify that A finishes its stream and releases its GPUs, then exercise A → B → A without writing a new checkpoint during either switch. Measure request arrival at the proxy to first token, queue time, restore duration and memory use. Compare a fresh vLLM start with local weights against two restores of the same generation, first from disk with a cold page cache and then with the files resident in RAM. Keep the hardware, model, prompt and engine settings the same.
 
 ## Phase 7 – Cluster scheduling
 
 - Operator and custom resources for models and checkpoint policies.
-- Scale-out of one model generation onto many GPU sets across nodes.
-- Making room for a requested model by sending a replica of another model to the warm tier.
+- Select a node with a compatible GPU set, matching runtime profile and a verified local copy of the requested generation. Snapshots can be staged on the nodes ahead of this phase's tests.
+- Scale out by restoring independent replicas from that generation. When making room for another model, the operator can evict a drained stateless replica or park an instance in the warm tier.
 - Rebalancing as the load shifts between models and nodes.
+
+**Planned acceptance.** Two replicas restored from the same generation must serve independent requests concurrently on two compatible nodes with separate GPU leases. Terminating one must leave the other serving. Placement skips nodes with an incompatible profile or a missing generation.
 
 ## Phase 8 – Full dashboard and access control
 
@@ -108,11 +119,14 @@ Without its own GPU allocation, model switching is impossible. A pod that reques
   - **Authenticating proxy:** an upstream proxy such as oauth2-proxy signs the user in, and the dashboard acts for them through Kubernetes impersonation.
 - Read-only display of resources managed by GitOps tools.
 
+**Planned acceptance.** Scale a model to zero. Its released snapshot generation must remain visible alongside the active replica count. Show which nodes match the profile, hold a verified local copy and currently have a free GPU set. Request the model and verify that the dashboard shows the new replica on its assigned node.
+
 ## Phase 9 – Checkpoint registry and migration
 
-- Checkpoint generations are registered per hardware and runtime profile and kept on suitable nodes.
-- Transfers between nodes are secured with leases and fencing.
-- Before a restore, the target validates the driver, GPU chip, topology, CRIU, runc and image digest.
+- Register immutable generations per model revision and hardware/runtime profile. Automatically prefetch matching generations, update node-local copies and reclaim unused generations within the disk budget. Keep files used by an ongoing restore available until it completes.
+- A target node verifies the manifest, runtime profile and file checksums before advertising the generation as ready. Leases and fencing coordinate the transfer of a live instance between nodes. Multiple replicas may read the same immutable generation concurrently.
+
+**Planned acceptance.** Join a compatible node with an empty snapshot directory. It must fetch the correct generation, verify it and serve a test request from a restored replica. Roll out a newer generation and reclaim the unused old copy. Incomplete or corrupt copies must never be advertised as ready.
 
 ## Phases 10 to 13 – More Kubernetes distributions
 
