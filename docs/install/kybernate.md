@@ -294,14 +294,14 @@ A process ignoring `CUDA_VISIBLE_DEVICES` could use every pool GPU in a `migrata
 - A workload moves only between GPUs of the same node.
 - A container created while the node agent is not running gets no GPU. Its `GPUWorkload` shows `Failed`; delete the pod to get GPUs.
 - A workload must have initialized CUDA before it can be suspended.
-- `cuda-checkpoint` cannot checkpoint memory that processes share through `cuMemExportToShareableHandle()`. NCCL allocates its buffers between ranks this way by default, so the checkpoint of a tensor-parallel rank does not finish. Set `NCCL_CUMEM_ENABLE=0` in the container: NCCL then shares its buffers through legacy CUDA IPC, which `cuda-checkpoint` supports.
+- `cuda-checkpoint` cannot checkpoint memory that processes share through `cuMemExportToShareableHandle()`. NCCL allocates its buffers between ranks this way by default, so the checkpoint of a tensor-parallel rank does not finish. Set `NCCL_CUMEM_ENABLE=0` in the container. Between GPUs without peer-to-peer access, NCCL then exchanges data through host shared memory, which `cuda-checkpoint` handles.
 
   ```yaml
   env:
     - { name: NCCL_CUMEM_ENABLE, value: "0" }
   ```
 
-  Tensor-parallel workloads whose ranks access each other's GPUs directly, through PCIe peer-to-peer or NVLink, are not verified yet.
+  Between GPUs with PCIe peer-to-peer access or NVLink, NCCL and the custom all-reduce of vLLM share GPU memory through CUDA IPC. `cuda-checkpoint` checkpoints that only in processes it launched itself (`cuda-checkpoint --launch-job`), which Kybernate does not do yet. Until it does, set `NCCL_P2P_DISABLE=1` as well and start vLLM with `--disable-custom-all-reduce`. The ranks then exchange data through host shared memory, which costs throughput between the GPUs. This is not verified on NVLink hardware yet.
 - A call of `cuda-checkpoint` that takes longer than five minutes is killed (`--checkpoint-timeout` of the node agent). If the processes cannot be resumed afterwards, the workload shows `Failed`; delete the pod.
 
 ## Update

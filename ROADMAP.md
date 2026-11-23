@@ -81,6 +81,7 @@ Without its own GPU allocation, model switching is impossible. A pod that reques
 - Spills a warm instance to the node's disk with CRIU and restores it.
   - The shim keeps reporting the container as running, so neither containerd nor the kubelet restart it while its processes are gone.
 - `cuda-checkpoint` and CRIU are orchestrated for all tensor-parallel ranks of an instance.
+- Tensor-parallel instances over NVLink or PCIe peer-to-peer. Their ranks share GPU memory through CUDA IPC, which `cuda-checkpoint` checkpoints only in jobs it launched itself (`cuda-checkpoint --launch-job`). Kybernate starts such workloads that way. Verified on NVLink hardware, including NVSwitch systems.
 - RAM and disk budgets per node, enforced by the node agent.
 - A decision on which runc the shim uses: the one shipped by the distribution, or a current upstream runc for the `kybernate` class only.
 
@@ -173,4 +174,5 @@ RHEL and compatible distributions such as Rocky Linux and AlmaLinux, in their cu
 - **MIG:** A MIG partition could become the unit of a Kybernate pool, so that small models are switched on a share of a large GPU with hardware isolation. A prerequisite is a test on MIG hardware showing that `cuda-checkpoint` checkpoints a process on a MIG partition and restores it on another partition with the same profile. Then the reservation, the inventory and the device plugin would handle MIG devices. Time-slicing and MPS are not planned: they share a GPU without isolating its memory, which works against exclusive GPU leases.
 
 - **CRI-O and OpenShift:** The warm tier works without changes to the runtime. The cold tier needs a different integration path than the containerd shim.
+- **NCCL with the cuMem API:** NCCL allocates the buffers it shares between ranks through the cuMem API by default. `cuda-checkpoint` does not yet support memory shared through `cuMemExportToShareableHandle()`, so Kybernate requires `NCCL_CUMEM_ENABLE=0` for tensor-parallel workloads. This also turns off NCCL features that need the cuMem API, such as NVLS on NVSwitch systems. NVIDIA plans the support for a later driver release, without changes to `cuda-checkpoint` itself. Then the node agent recognizes the capability from the driver version of the node's runtime profile, and the restriction falls away on such nodes.
 - **CRIU's own CUDA plugin:** It gained GPU device mapping on restore in CRIU 4.3. It could replace parts of the orchestration that Kybernate does itself today.
