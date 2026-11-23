@@ -237,6 +237,29 @@ func TestCreateContainerFailsWhenThePoolIsExhausted(t *testing.T) {
 	}
 }
 
+func TestRestartedContainerReplacesTheStoppedOne(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	pod := e.pod("model", 1, "")
+	if _, err := e.start(pod, "main", 1); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	sb := &api.PodSandbox{Namespace: pod.Namespace, Name: pod.Name, Uid: string(pod.UID)}
+	if _, err := e.m.StopContainer(context.Background(), sb, &api.Container{Id: "ctr-model-main", Name: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	// The kubelet restarts the container: a new ID, the same name, and the
+	// stopped container is not removed yet.
+	if _, _, err := e.m.CreateContainer(context.Background(), sb, &api.Container{Id: "ctr-model-main-2", Name: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	cs := e.workload("model").Status.Containers
+	if len(cs) != 1 || cs[0].ContainerID != "ctr-model-main-2" || !slices.Equal(cs[0].LeasedGPUs, []string{"GPU-a"}) {
+		t.Fatalf("containers = %+v", cs)
+	}
+}
+
 func TestSuspendAndResumeStrict(t *testing.T) {
 	e := newEnv(t, "GPU-a", "GPU-b")
 	pod := e.pod("model", 1, "")
