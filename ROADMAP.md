@@ -78,7 +78,7 @@ Without its own GPU allocation, model switching is impossible. A pod that reques
 ## Phase 5 – Runtime shim and the cold tier
 
 - A containerd shim behind the RuntimeClass `kybernate`.
-- Spills a warm instance to the node's NVMe with CRIU and restores it.
+- Spills a warm instance to the node's disk with CRIU and restores it.
   - The shim keeps reporting the container as running, so neither containerd nor the kubelet restart it while its processes are gone.
 - `cuda-checkpoint` and CRIU are orchestrated for all tensor-parallel ranks of an instance.
 - RAM and disk budgets per node, enforced by the node agent.

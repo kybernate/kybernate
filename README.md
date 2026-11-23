@@ -33,7 +33,7 @@ The three layers in the Kybernate logo stand for the temperature of a model's st
 | --- | --- | --- | --- |
 | red | **hot** | VRAM, the model is serving | GPUs are held |
 | orange | **warm** | host RAM, CUDA state checkpointed via `cuda-checkpoint` | GPUs are free, resume in seconds |
-| blue | **cold** | the node's NVMe, process tree dumped via CRIU | GPUs and RAM are free, resume without a cold start |
+| blue | **cold** | the node's disk, process tree dumped via CRIU | GPUs and RAM are free, resume without a cold start |
 
 The moon is the hibernation that moves a model between these tiers.
 
@@ -80,7 +80,7 @@ flowchart TB
             subgraph tiers["Node memory and storage"]
                 direction LR
                 ram["RAM · warm"]
-                nvme["NVMe · cold"]
+                disk["Disk · cold"]
             end
         end
 
@@ -101,8 +101,8 @@ flowchart TB
     deviceplugin --> regular
     agent --> pool
     pool <-->|suspend · resume| ram
-    ram <-->|spill · restore| nvme
-    nvme <-.->|generations| registry
+    ram <-->|spill · restore| disk
+    disk <-.->|generations| registry
 
     classDef hot fill:#d64f2d,stroke:#a93a1e,color:#ffffff
     classDef warm fill:#f0913f,stroke:#d2732a,color:#1d2347
@@ -111,12 +111,12 @@ flowchart TB
     classDef planned stroke-dasharray: 5 5
     class pool hot
     class ram warm
-    class nvme cold
+    class disk cold
     class operator,proxy,agent,shim,deviceplugin kyb
     class dashboard,registry planned
 ```
 
-The red, orange and blue boxes show where a model's state lives: hot in VRAM, warm in RAM, cold on NVMe. Dashed boxes are optional or planned.
+The red, orange and blue boxes show where a model's state lives: hot in VRAM, warm in RAM, cold on disk. Dashed boxes are optional or planned.
 
 
 | Component | Role |
@@ -137,7 +137,7 @@ flowchart LR
     free -->|yes| lease["Node agent leases<br/>the GPU set"]
     free -->|no| room["A replica of model A<br/>drains and goes warm<br/>VRAM → RAM"]
     room --> lease
-    lease --> resume["Model B resumes<br/>warm: RAM → VRAM<br/>cold: NVMe → RAM → VRAM"]
+    lease --> resume["Model B resumes<br/>warm: RAM → VRAM<br/>cold: disk → RAM → VRAM"]
     resume --> release(["Proxy releases the queue<br/>to model B"])
 
     classDef hot fill:#d64f2d,stroke:#a93a1e,color:#ffffff
