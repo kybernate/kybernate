@@ -237,6 +237,49 @@ func TestCreateContainerFailsWhenThePoolIsExhausted(t *testing.T) {
 	}
 }
 
+func TestRestartedContainerReplacesTheStoppedOne(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	pod := e.pod("model", 1, "")
+	if _, err := e.start(pod, "main", 1); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	sb := &api.PodSandbox{Namespace: pod.Namespace, Name: pod.Name, Uid: string(pod.UID)}
+	if _, err := e.m.StopContainer(context.Background(), sb, &api.Container{Id: "ctr-model-main", Name: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	// The kubelet restarts the container: a new ID, the same name, and the
+	// stopped container is not removed yet.
+	if _, _, err := e.m.CreateContainer(context.Background(), sb, &api.Container{Id: "ctr-model-main-2", Name: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	cs := e.workload("model").Status.Containers
+	if len(cs) != 1 || cs[0].ContainerID != "ctr-model-main-2" || !slices.Equal(cs[0].LeasedGPUs, []string{"GPU-a"}) {
+		t.Fatalf("containers = %+v", cs)
+	}
+}
+
+func TestDeletedPodReleasesItsLeases(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	pod := e.pod("model", 1, "")
+	if _, err := e.start(pod, "main", 1); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	// The pod is gone, but NRI never reported the container as stopped.
+	if err := e.c.Delete(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	if free := e.m.Leases.Free(); !slices.Equal(free, []string{"GPU-a"}) {
+		t.Fatalf("free = %v, want the GPU of the deleted pod back", free)
+	}
+	if len(e.m.LeaseHolders()) != 0 {
+		t.Fatalf("lease holders = %v", e.m.LeaseHolders())
+	}
+}
+
 func TestSuspendAndResumeStrict(t *testing.T) {
 	e := newEnv(t, "GPU-a", "GPU-b")
 	pod := e.pod("model", 1, "")
@@ -346,6 +389,21 @@ func TestFailedCheckpointUndoesTheLocks(t *testing.T) {
 	}
 	if e.tool.state[50] != checkpoint.StateRunning || e.tool.state[51] != checkpoint.StateRunning {
 		t.Fatalf("processes stay locked: %v", e.tool.state)
+	}
+}
+
+func TestSuspendThatCannotBeUndoneFails(t *testing.T) {
+	e := newEnv(t, "GPU-a")
+	if _, err := e.start(e.pod("model", 1, ""), "main", 50, 51); err != nil {
+		t.Fatal(err)
+	}
+	e.m.ReconcileAll(context.Background())
+	e.tool.fail["checkpoint"] = true
+	e.tool.fail["unlock"] = true
+	e.setState("model", v1alpha1.WorkloadSuspended)
+	w := e.workload("model")
+	if w.Status.Phase != v1alpha1.PhaseFailed || !strings.Contains(w.Status.Message, "delete the pod") {
+		t.Fatalf("status = %+v", w.Status)
 	}
 }
 

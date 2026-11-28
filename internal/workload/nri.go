@@ -201,20 +201,27 @@ func (m *Manager) CreateContainer(ctx context.Context, sandbox *api.PodSandbox, 
 	return adj, nil, nil
 }
 
-// StopContainer frees the GPUs of a stopped container.
+// StopContainer frees the GPUs of a stopped container and forgets it. A
+// stopped container never runs again: when the kubelet restarts it, it
+// creates a new container with the same name, and the kubelet keeps the
+// stopped one around for its logs.
 func (m *Manager) StopContainer(_ context.Context, _ *api.PodSandbox, ctr *api.Container) ([]*api.ContainerUpdate, error) {
-	m.release(ctr.GetId(), "stopped")
+	m.forget(ctr.GetId(), "stopped")
 	return nil, nil
 }
 
 // RemoveContainer forgets a removed container.
 func (m *Manager) RemoveContainer(_ context.Context, _ *api.PodSandbox, ctr *api.Container) error {
-	m.release(ctr.GetId(), "removed")
+	m.forget(ctr.GetId(), "removed")
+	return nil
+}
+
+func (m *Manager) forget(id, why string) {
+	m.release(id, why)
 	m.mu.Lock()
-	delete(m.containers, ctr.GetId())
+	delete(m.containers, id)
 	m.mu.Unlock()
 	m.Kick()
-	return nil
 }
 
 func (m *Manager) release(id, why string) {

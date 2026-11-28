@@ -105,6 +105,14 @@ func compare(a, b string) int {
 }
 
 func (m *Manager) reconcile(ctx context.Context, key podKey, cs []*container) error {
+	// containerd can lose a container without telling NRI, for example when
+	// it restarts while the container ends. Its leases must not outlive the pod.
+	if _, err := m.getPod(ctx, key.Namespace, key.Name, cs[0].PodUID); apierrors.IsNotFound(err) {
+		for _, c := range cs {
+			m.forget(c.ID, "pod deleted")
+		}
+		return nil
+	}
 	w, err := m.ensureWorkload(ctx, key, cs[0].PodUID)
 	if err != nil {
 		return err
@@ -152,7 +160,7 @@ func (m *Manager) suspend(ctx context.Context, key podKey, cs []*container, w *v
 	for _, c := range cs {
 		all, err := m.Procs.ContainerPIDs(c.ID)
 		if err != nil {
-			m.failSuspend(ctx, key, cs, fmt.Errorf("finding the processes of %s: %w", c.Name, err))
+			m.failSuspend(ctx, key, cs, fmt.Errorf("finding the processes of %s: %w", c.Name, err), nil)
 			return
 		}
 		for _, pid := range all {
@@ -162,31 +170,40 @@ func (m *Manager) suspend(ctx context.Context, key podKey, cs []*container, w *v
 		}
 	}
 	if len(pids) == 0 {
-		m.failSuspend(ctx, key, cs, errNoProcess)
+		m.failSuspend(ctx, key, cs, errNoProcess, nil)
 		return
 	}
 
 	var locked, done []int
-	undo := func() {
+	undo := func() error {
+		var errs error
 		for _, pid := range done {
-			_ = m.Tool.Restore(ctx, pid, nil)
+			if st, err := m.Tool.State(ctx, pid); err == nil && st != checkpoint.StateCheckpointed {
+				continue
+			}
+			if err := m.Tool.Restore(ctx, pid, nil); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("restoring process %d: %w", pid, err))
+			}
 		}
 		for _, pid := range locked {
-			_ = m.Tool.Unlock(ctx, pid)
+			if err := m.Tool.Unlock(ctx, pid); err != nil {
+				errs = errors.Join(errs, fmt.Errorf("unlocking process %d: %w", pid, err))
+			}
 		}
+		return errs
 	}
 	for _, pid := range pids {
 		if err := m.Tool.Lock(ctx, pid); err != nil {
-			undo()
-			m.failSuspend(ctx, key, cs, fmt.Errorf("locking process %d: %w", pid, err))
+			m.failSuspend(ctx, key, cs, fmt.Errorf("locking process %d: %w", pid, err), undo())
 			return
 		}
 		locked = append(locked, pid)
 	}
 	for _, pid := range pids {
 		if err := m.Tool.Checkpoint(ctx, pid); err != nil {
-			undo()
-			m.failSuspend(ctx, key, cs, fmt.Errorf("checkpointing process %d: %w", pid, err))
+			// A process that failed halfway may be checkpointed or locked.
+			done = append(done, pid)
+			m.failSuspend(ctx, key, cs, fmt.Errorf("checkpointing process %d: %w", pid, err), undo())
 			return
 		}
 		done = append(done, pid)
@@ -205,9 +222,16 @@ func (m *Manager) suspend(ctx context.Context, key podKey, cs []*container, w *v
 	m.changed()
 }
 
-func (m *Manager) failSuspend(ctx context.Context, key podKey, cs []*container, err error) {
-	m.setPhase(key, v1alpha1.PhaseRunning, "suspend failed: "+err.Error())
-	m.Log.Warn("suspending a workload failed", "pod", key.Namespace+"/"+key.Name, "error", err)
+// failSuspend reports a failed suspend. The workload keeps running if its
+// processes could be restored and unlocked; otherwise it is Failed.
+func (m *Manager) failSuspend(ctx context.Context, key podKey, cs []*container, err, undoErr error) {
+	if undoErr != nil {
+		m.setPhase(key, v1alpha1.PhaseFailed, fmt.Sprintf("suspend failed: %v; the processes could not be resumed: %v; delete the pod", err, undoErr))
+		m.Log.Error("suspending a workload failed, its processes are stuck", "pod", key.Namespace+"/"+key.Name, "error", err, "undo", undoErr)
+	} else {
+		m.setPhase(key, v1alpha1.PhaseRunning, "suspend failed: "+err.Error())
+		m.Log.Warn("suspending a workload failed", "pod", key.Namespace+"/"+key.Name, "error", err)
+	}
 	_ = m.writeStatus(ctx, key, cs)
 }
 

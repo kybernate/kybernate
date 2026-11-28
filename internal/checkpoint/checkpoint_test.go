@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeProc(t *testing.T, root string, pid, cgroup string) {
@@ -88,5 +89,16 @@ func TestCUDAProcessesAndActions(t *testing.T) {
 
 	if _, err := CUDAProcesses(ctx, tool, Procfs{Root: root}, "none"); err == nil {
 		t.Fatal("a container without processes returned CUDA processes")
+	}
+}
+
+func TestActionsTimeOut(t *testing.T) {
+	tool := Tool{Timeout: 20 * time.Millisecond, Run: func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	err := tool.Checkpoint(context.Background(), 7)
+	if err == nil || !strings.Contains(err.Error(), "checkpoint did not finish within 20ms") {
+		t.Fatalf("err = %v", err)
 	}
 }
